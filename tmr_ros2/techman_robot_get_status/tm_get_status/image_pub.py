@@ -156,20 +156,7 @@ class ImagePub(Node):
         model_id = request.args.get('model_id')
         print('model_id: {}'.format(model_id))
 
-        # check key/value
-        if model_id is None:
-            print("model_id is not set")    
-            result={                    
-                "message": "fail",
-                "result": "model_id required"
-            }  
-            return jsonify(result)
-
-        # convert image data        
-        #file2np = np.fromstring(request.files['file'].read(), np.uint8)        
-        #img = cv2.imdecode(file2np, cv2.IMREAD_UNCHANGED)
-        #cv2.imwrite('test.png',img)
-
+        # convert image data
         self.set_image_and_notify_send(request.files['file'].read())
 
         result = self.fake_result(m_method)    
