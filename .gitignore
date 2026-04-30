@@ -20,3 +20,11 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Python virtual environment
+venv/
+
+# Test/debug captures
+cam0_test.jpg
+last_capture.jpg
+test_image.jpg

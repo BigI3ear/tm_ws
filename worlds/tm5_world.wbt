@@ -1,0 +1,265 @@
+#VRML_SIM R2023b utf8
+
+WorldInfo {
+  title "TM5-900 Digital Twin"
+  basicTimeStep 8
+}
+
+Viewpoint {
+  orientation -0.3 0.7 0.6 1.2
+  position -1.5 1.5 1.5
+}
+
+Background {
+  skyColor [ 0.4 0.7 1.0 ]
+}
+
+DirectionalLight {
+  ambientIntensity 1
+  direction 0.1 -1 -0.2
+}
+
+DEF FLOOR Solid {
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.8 0.8 0.8
+        roughness 1
+      }
+      geometry Plane {
+        size 2 2
+      }
+    }
+  ]
+  boundingObject Plane {
+    size 2 2
+  }
+  locked TRUE
+}
+
+DEF TM5_BASE Robot {
+  translation 0 0 0
+  rotation 0 1 0 0
+  children [
+    DEF BASE_LINK Shape {
+      appearance PBRAppearance {
+        baseColor 0.2 0.2 0.2
+      }
+      geometry Cylinder {
+        height 0.05
+        radius 0.1
+      }
+    }
+
+    DEF JOINT1 HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 0 1
+        anchor 0 0 0.025
+        minStop -3.14
+        maxStop 3.14
+      }
+      device [
+        RotationalMotor {
+          name "joint1"
+          maxVelocity 3.14
+          maxTorque 200
+        }
+        PositionSensor {
+          name "joint1_sensor"
+        }
+      ]
+      endPoint DEF LINK1 Solid {
+        translation 0 0 0.025
+        children [
+          Shape {
+            appearance PBRAppearance { baseColor 0.8 0.8 0.8 }
+            geometry Cylinder { height 0.15 radius 0.07 }
+          }
+          DEF JOINT2 HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 1 0 0
+              anchor 0 0 0.1
+              minStop -2.18
+              maxStop 2.18
+            }
+            device [
+              RotationalMotor {
+                name "joint2"
+                maxVelocity 3.14
+                maxTorque 200
+              }
+              PositionSensor {
+                name "joint2_sensor"
+              }
+            ]
+            endPoint DEF LINK2 Solid {
+              translation 0 0 0.1
+              children [
+                Shape {
+                  appearance PBRAppearance { baseColor 0.7 0.7 0.7 }
+                  geometry Box { size 0.06 0.06 0.35 }
+                }
+                DEF JOINT3 HingeJoint {
+                  jointParameters HingeJointParameters {
+                    axis 1 0 0
+                    anchor 0 0 0.2
+                    minStop -3.57
+                    maxStop 3.57
+                  }
+                  device [
+                    RotationalMotor {
+                      name "joint3"
+                      maxVelocity 3.14
+                      maxTorque 100
+                    }
+                    PositionSensor {
+                      name "joint3_sensor"
+                    }
+                  ]
+                  endPoint DEF LINK3 Solid {
+                    translation 0 0 0.2
+                    children [
+                      Shape {
+                        appearance PBRAppearance { baseColor 0.6 0.6 0.6 }
+                        geometry Box { size 0.055 0.055 0.3 }
+                      }
+                      DEF JOINT4 HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis 0 0 1
+                          anchor 0 0 0.175
+                          minStop -3.14
+                          maxStop 3.14
+                        }
+                        device [
+                          RotationalMotor {
+                            name "joint4"
+                            maxVelocity 3.14
+                            maxTorque 100
+                          }
+                          PositionSensor {
+                            name "joint4_sensor"
+                          }
+                        ]
+                        endPoint DEF LINK4 Solid {
+                          translation 0 0 0.175
+                          children [
+                            Shape {
+                              appearance PBRAppearance { baseColor 0.5 0.5 0.5 }
+                              geometry Box { size 0.05 0.05 0.25 }
+                            }
+                            DEF JOINT5 HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis 1 0 0
+                                anchor 0 0 0.14
+                                minStop -2.09
+                                maxStop 2.09
+                              }
+                              device [
+                                RotationalMotor {
+                                  name "joint5"
+                                  maxVelocity 3.14
+                                  maxTorque 50
+                                }
+                                PositionSensor {
+                                  name "joint5_sensor"
+                                }
+                              ]
+                              endPoint DEF LINK5 Solid {
+                                translation 0 0 0.14
+                                children [
+                                  Shape {
+                                    appearance PBRAppearance { baseColor 0.4 0.4 0.4 }
+                                    geometry Box { size 0.045 0.045 0.12 }
+                                  }
+                                  DEF JOINT6 HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis 0 0 1
+                                      anchor 0 0 0.07
+                                      minStop -6.28
+                                      maxStop 6.28
+                                    }
+                                    device [
+                                      RotationalMotor {
+                                        name "joint6"
+                                        maxVelocity 6.28
+                                        maxTorque 30
+                                      }
+                                      PositionSensor {
+                                        name "joint6_sensor"
+                                      }
+                                    ]
+                                    endPoint DEF END_EFFECTOR Solid {
+                                      translation 0 0 0.07
+                                      children [
+                                        Shape {
+                                          appearance PBRAppearance { baseColor 0.2 0.6 0.8 }
+                                          geometry Cylinder { height 0.04 radius 0.03 }
+                                        }
+                                        DEF WRIST_CAMERA Camera {
+                                          translation 0 0 0.03
+                                          rotation 1 0 0 -1.5708
+                                          name "wrist_camera"
+                                          width 640
+                                          height 480
+                                          fieldOfView 1.0
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+  controller "tm5_controller"
+}
+
+DEF RED_BOX Solid {
+  translation 0.4 0 0.025
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.9 0.1 0.1 }
+      geometry Box { size 0.05 0.05 0.05 }
+    }
+  ]
+  boundingObject Box { size 0.05 0.05 0.05 }
+  physics Physics {}
+  name "red_box"
+}
+
+DEF BLUE_SPHERE Solid {
+  translation 0.3 0.2 0.025
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.1 0.1 0.9 }
+      geometry Sphere { radius 0.025 }
+    }
+  ]
+  boundingObject Sphere { radius 0.025 }
+  physics Physics {}
+  name "blue_sphere"
+}
+
+DEF GREEN_CYLINDER Solid {
+  translation 0.35 -0.15 0.025
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.1 0.8 0.1 }
+      geometry Cylinder { height 0.05 radius 0.025 }
+    }
+  ]
+  boundingObject Cylinder { height 0.05 radius 0.025 }
+  physics Physics {}
+  name "green_cylinder"
+}
