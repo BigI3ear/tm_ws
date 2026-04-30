@@ -156,6 +156,78 @@ pytest
 
 ---
 
+---
+
+## Digital Twin — Mac Vision Pipeline (added 2026-04-30)
+
+Runs entirely on Mac, no ROS required. Purpose: iPhone camera scans QR codes on medicine tablets → Claude classifies the medicine → TM5-900 picks and places it into the correct bin.
+
+### Stack
+- Python 3.13 + venv at `Digital Twin/venv/`
+- `anthropic` + `opencv-python` + `pyzbar` + `Pillow`
+- Camera: iPhone via Continuity Camera (index 1), or pass `--image photo.jpg`
+- Robot control: direct TCP → TMflow Listen Node (port **5890**)
+
+### Key files
+| File | Purpose |
+|------|---------|
+| `main.py` | Orchestrator: capture → QR scan → classify → arm motion |
+| `vision/claude_vision.py` | Stage 1: pyzbar QR decode · Stage 2: Claude medicine classification |
+| `arm_comms/tm5_connect.py` | TMSCT protocol over TCP to TM5-900 |
+| `requirements.txt` | Python dependencies |
+
+### Bin assignments
+| Bin | Category | Robot position (mm) |
+|-----|----------|-------------------|
+| A | Common / OTC | (500, 150) |
+| B | Prescription | (500, 0) |
+| C | Controlled / Unknown | (500, −150) |
+
+### Running
+```bash
+cd "Digital Twin"
+source venv/bin/activate
+
+# Test vision only (no arm)
+python main.py --dry-run
+
+# Use a saved image instead of camera
+python main.py --image photo.jpg --dry-run
+
+# Live run (arm must be reachable)
+TM5_IP=192.168.1.102 python main.py
+```
+
+### TMflow setup required on robot
+- Port **5890** = TMSCT (Listen Node commands)
+- Port **5891** = TMSVR (status only — do NOT send commands here)
+- TMflow project must be **running** with a Listen Node as the active node
+- Recommended flowchart: `Start → Listen1 → (Pass loops back to Listen1)`
+- WaitFor nodes between Listen loops can block command reception — avoid them or keep timeout = 0
+
+### Environment variables (set in `~/.zshrc`)
+```bash
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+export TM5_IP=192.168.1.102
+```
+
+### Workspace calibration (update in `main.py` once physically set up)
+```python
+TABLE_X_MIN = 300   # mm — left edge of camera FOV in robot frame
+TABLE_X_MAX = 600   # mm — right edge
+TABLE_Y_MIN = -200  # mm — far from robot
+TABLE_Y_MAX =  200  # mm — near robot
+PICK_Z_DOWN =  50   # mm — descent height for grasp
+PICK_Z_UP   = 200   # mm — travel height
+```
+
+### Status (as of 2026-04-30)
+- Vision pipeline (QR → Claude classify) working end-to-end on Mac
+- TCP connection to TM5-900 at 192.168.1.102 established
+- **Pending**: Listen Node (port 5890) not yet accepting commands — TMflow project must loop on Listen1
+
+---
+
 ## Project Architecture
 
 ```
