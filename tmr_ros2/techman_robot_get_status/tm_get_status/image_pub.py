@@ -5,15 +5,20 @@ import queue
 import signal
 from rclpy.node import Node
 
-from sensor_msgs.msg import Image 
+from sensor_msgs.msg import Image
 
 from flask import Flask, request, jsonify
 import numpy as np
 import cv2
 from waitress import serve
 from datetime import datetime
-from cv_bridge import CvBridge, CvBridgeError
 import threading
+
+try:
+    from cv_bridge import CvBridge, CvBridgeError
+    _CV_BRIDGE_OK = True
+except Exception:
+    _CV_BRIDGE_OK = False
 
 
 class ImagePub(Node):
@@ -46,7 +51,9 @@ class ImagePub(Node):
         self.img = cv2.flip(self.img, 1)
         self.set_image_and_notify_send(self.img)
 
-    def image_publisher(self,image):
+    def image_publisher(self, image):
+        if not _CV_BRIDGE_OK:
+            return
         bridge = CvBridge()
         msg = bridge.cv2_to_imgmsg(image)
         self.get_logger().info('Publishing something !, queue size is ' + str(self.imageQ.qsize()))
@@ -62,19 +69,24 @@ class ImagePub(Node):
         self.con.acquire()
         while(True):
             self.con.wait()
-            while(not self.imageQ.empty()):
-                if(isRequestData):
-                    file2np = np.fromstring(self.imageQ.get(), np.uint8)
+            # Drain queue while holding lock, then release before slow work
+            items = []
+            while not self.imageQ.empty():
+                items.append(self.imageQ.get())
+            leave = self.leaveThread
+            self.con.release()
+            for raw in items:
+                if isRequestData:
+                    file2np = np.frombuffer(raw, np.uint8)
                     img = cv2.imdecode(file2np, cv2.IMREAD_UNCHANGED)
-                    self.latest_frame = img
-                    self.image_publisher(img)
                 else:
-                    img = self.imageQ.get()
+                    img = raw
+                if img is not None:
                     self.latest_frame = img
                     self.image_publisher(img)
-            if(self.leaveThread):
-                break
-        self.con.release()
+            if leave:
+                return
+            self.con.acquire()
 
     def snapshot(self):
         if self.latest_frame is None:

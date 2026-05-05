@@ -88,7 +88,7 @@ def classify_medicine(medicine_code: str) -> dict:
     Ask Claude what this medicine is and where to put it.
     Returns: {medicine, label, description, bin, action}
     """
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=30.0)
     response = client.messages.create(
         model="claude-opus-4-7",
         max_tokens=256,
@@ -112,17 +112,53 @@ def classify_medicine(medicine_code: str) -> dict:
     return json.loads(raw)
 
 
+def _prepare_image(frame) -> bytes:
+    """Validate, normalise channels, resize, and JPEG-encode a frame for the Claude API."""
+    if frame is None or frame.size == 0:
+        raise RuntimeError("Invalid frame: None or empty")
+    h, w = frame.shape[:2]
+    if h < 10 or w < 10:
+        raise RuntimeError(f"Frame too small: {w}x{h}")
+
+    # Float frames from some pipelines produce corrupt JPEG — always encode as uint8
+    if frame.dtype != np.uint8:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+    # Normalise to 3-channel BGR
+    if len(frame.shape) == 2:
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    elif frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+    # np.frombuffer / non-contiguous slices can cause silent OpenCV encoding failures
+    frame = np.ascontiguousarray(frame)
+
+    # Cap longest edge at 1568 px (Claude recommended vision limit)
+    MAX_DIM = 1568
+    if max(h, w) > MAX_DIM:
+        scale = MAX_DIM / max(h, w)
+        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    # Encode; reduce quality if result exceeds 4 MB
+    # A valid JPEG is at least a few hundred bytes; anything smaller is corrupt
+    MAX_BYTES = 4 * 1024 * 1024
+    MIN_BYTES = 100
+    for quality in (85, 70, 50, 35):
+        ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if ret and buf is not None and MIN_BYTES <= len(buf) <= MAX_BYTES:
+            return buf.tobytes()
+    raise RuntimeError("Could not encode frame within 4 MB limit")
+
+
 def classify_from_image(frame) -> dict:
     """
     No QR found — send the image to Claude vision to visually identify the medicine.
     Returns: {medicine, description, bin, action}
     """
-    ret, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    if not ret:
-        raise RuntimeError("Failed to encode frame for Claude vision")
-    img_b64 = base64.b64encode(buf.tobytes()).decode()
+    img_bytes = _prepare_image(frame)
+    img_b64 = base64.b64encode(img_bytes).decode()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=30.0)
     response = client.messages.create(
         model="claude-opus-4-7",
         max_tokens=256,
@@ -164,6 +200,8 @@ def analyze(frame_or_path) -> list[dict]:
     """
     if isinstance(frame_or_path, str):
         frame = cv2.imread(frame_or_path)
+        if frame is None:
+            raise RuntimeError(f"Could not load image: {frame_or_path}")
     else:
         frame = frame_or_path
 
