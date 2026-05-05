@@ -1,11 +1,13 @@
 """
 Digital Twin — Medicine QR Scanner Pipeline
-  iPhone camera → QR decode → Claude classifies medicine → TM5-900 picks and places
+  Camera → QR decode → Claude classifies medicine → TM5-900 picks and places
 
 Usage:
-  python main.py --dry-run              # test without arm
-  python main.py --image photo.jpg --dry-run
-  TM5_IP=192.168.1.102 python main.py  # live run
+  python main.py --dry-run                        # test without arm (webcam)
+  python main.py --image photo.jpg --dry-run      # use a saved image
+  python main.py --robot-cam --dry-run            # use robot eye-in-hand camera
+  ROBOT_CAM_URL=http://<wsl2-ip>:6189/api/snapshot python main.py --robot-cam
+  TM5_IP=192.168.1.102 python main.py --robot-cam  # full live run
 """
 import argparse
 import sys
@@ -13,7 +15,7 @@ import time
 
 import cv2
 
-from vision.claude_vision import analyze, capture_frame
+from vision.claude_vision import analyze, capture_frame, capture_from_robot_cam, ROBOT_CAM_URL
 from arm_comms.tm5_connect import TM5
 
 # ---------------------------------------------------------------------------
@@ -48,7 +50,7 @@ def place_in_bin(arm: TM5, bin_id: str, dry_run: bool):
         print("    [dry-run] skipping arm motion")
         return
     arm.move_cartesian(bx, by, bz, TCP_RX, TCP_RY, TCP_RZ, speed=20)
-    arm.gripper_open()
+    arm.suction_off()
     time.sleep(0.3)
     arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=15)
 
@@ -63,17 +65,16 @@ def pick_medicine(arm: TM5, item: dict, dry_run: bool):
         print("    [dry-run] skipping arm motion")
         return
 
-    arm.gripper_open()
     arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=20)
     arm.move_cartesian(x, y, PICK_Z_DOWN, TCP_RX, TCP_RY, TCP_RZ, speed=8)
-    arm.gripper_close()
+    arm.suction_on()
     time.sleep(0.5)
     arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=15)
 
     place_in_bin(arm, item["bin"], dry_run=False)
 
 
-def run(image_source, dry_run: bool):
+def run(image_source, dry_run: bool, robot_cam_url: str | None = None):
     arm = TM5()
 
     if not dry_run:
@@ -87,7 +88,16 @@ def run(image_source, dry_run: bool):
         time.sleep(1)
 
     print("\nCapturing image...")
-    if image_source is None:
+    if robot_cam_url is not None:
+        print(f"  Triggering robot camera...")
+        if not dry_run:
+            arm.capture()
+            time.sleep(1.5)  # wait for frame to arrive at Flask server
+        frame = capture_from_robot_cam(robot_cam_url)
+        cv2.imwrite("last_capture.jpg", frame)
+        print("  Snapshot saved → last_capture.jpg")
+        source = frame
+    elif image_source is None:
         frame = capture_frame()
         cv2.imwrite("last_capture.jpg", frame)
         print("  Snapshot saved → last_capture.jpg")
@@ -104,6 +114,11 @@ def run(image_source, dry_run: bool):
 
     print(f"\nFound {len(items)} medicine(s):")
     for item in items:
+        src = "QR" if item.get("source") == "qr" else "vision (no QR)"
+        conf = item.get("confidence", "?")
+        print(f"  Identified via {src} — confidence: {conf}")
+        if conf == "low":
+            print("  WARNING: low confidence — verify before trusting arm motion")
         pick_medicine(arm, item, dry_run=dry_run)
 
     if not dry_run:
@@ -119,8 +134,16 @@ def main():
                         help="Test vision and logic without moving the arm")
     parser.add_argument("--image", type=str, default=None,
                         help="Use an image file instead of the live camera")
+    parser.add_argument("--robot-cam", action="store_true",
+                        help="Use the TM5-900 built-in camera via the image server")
+    parser.add_argument("--robot-cam-url", type=str, default=ROBOT_CAM_URL,
+                        help=f"Snapshot URL of the robot image server (default: {ROBOT_CAM_URL})")
     args = parser.parse_args()
-    run(image_source=args.image, dry_run=args.dry_run)
+    run(
+        image_source=args.image,
+        dry_run=args.dry_run,
+        robot_cam_url=args.robot_cam_url if args.robot_cam else None,
+    )
 
 
 if __name__ == "__main__":

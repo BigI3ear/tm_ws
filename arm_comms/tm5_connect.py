@@ -69,11 +69,18 @@ class TM5:
     def scan_pose(self) -> str:
         return self.move_joints(0, -30, 100, 0, 20, 0, speed=12)
 
-    def gripper_open(self) -> str:
-        return self._send('IO.SetDO("DO_0",false)')
+    def capture(self, vision_job: str = "Vision1", timeout_ms: int = 5000) -> str:
+        """Trigger Vision1 to capture one frame and POST it to the Flask image server."""
+        script = f'Vision.GetVisionResult("{vision_job}","0","",{timeout_ms})'
+        return self._send(script)
 
-    def gripper_close(self) -> str:
+    def suction_on(self) -> str:
+        """Activate vacuum — picks up medicine."""
         return self._send('IO.SetDO("DO_0",true)')
+
+    def suction_off(self) -> str:
+        """Deactivate vacuum — releases medicine."""
+        return self._send('IO.SetDO("DO_0",false)')
 
     def ping(self) -> bool:
         try:

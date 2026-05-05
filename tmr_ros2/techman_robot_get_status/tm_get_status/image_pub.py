@@ -23,6 +23,7 @@ class ImagePub(Node):
         self.con = threading.Condition()
         self.imageQ = queue.Queue()
         self.leaveThread = False
+        self.latest_frame = None  # most recent decoded frame for /api/snapshot
         if(isTest):
             self.t = threading.Thread(target = self.pub_data_thread, args=(False,))
             timer_period = 1.0
@@ -63,14 +64,26 @@ class ImagePub(Node):
             self.con.wait()
             while(not self.imageQ.empty()):
                 if(isRequestData):
-                    file2np = np.fromstring(self.imageQ.get(), np.uint8)        
+                    file2np = np.fromstring(self.imageQ.get(), np.uint8)
                     img = cv2.imdecode(file2np, cv2.IMREAD_UNCHANGED)
+                    self.latest_frame = img
                     self.image_publisher(img)
                 else:
-                    self.image_publisher(self.imageQ.get())
+                    img = self.imageQ.get()
+                    self.latest_frame = img
+                    self.image_publisher(img)
             if(self.leaveThread):
                 break
         self.con.release()
+
+    def snapshot(self):
+        if self.latest_frame is None:
+            return jsonify({"message": "no frame received yet"}), 503
+        ret, buf = cv2.imencode(".jpg", self.latest_frame)
+        if not ret:
+            return jsonify({"message": "encode error"}), 500
+        from flask import Response
+        return Response(buf.tobytes(), mimetype="image/jpeg")
 
     def fake_result(self,m_method):
         # clsssification
@@ -167,6 +180,7 @@ def set_route(app,node):
     app.route('/api/<string:m_method>', methods=['POST'])(node.post)
     app.route('/api/<string:m_method>', methods=['GET'])(node.get)
     app.route('/api', methods=['GET'])(node.get_none)
+    app.route('/api/snapshot', methods=['GET'])(node.snapshot)
 
 def main():
     rclpy.init(args=None)
