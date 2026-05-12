@@ -62,10 +62,10 @@ def place_in_bin(arm: TM5, bin_id: str, dry_run: bool):
     if dry_run:
         print("    [dry-run] skipping arm motion")
         return
-    arm.move_cartesian(bx, by, bz, TCP_RX, TCP_RY, TCP_RZ, speed=20)
+    arm.move_cartesian(bx, by, bz, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
     arm.suction_off()
     time.sleep(0.3)
-    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=15)
+    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.15)
 
 
 def pick_medicine(arm: TM5, item: dict, dry_run: bool):
@@ -78,11 +78,11 @@ def pick_medicine(arm: TM5, item: dict, dry_run: bool):
         print("    [dry-run] skipping arm motion")
         return
 
-    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=20)
-    arm.move_cartesian(x, y, PICK_Z_DOWN, TCP_RX, TCP_RY, TCP_RZ, speed=8)
+    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
+    arm.move_cartesian(x, y, PICK_Z_DOWN, TCP_RX, TCP_RY, TCP_RZ, speed=0.05)
     arm.suction_on()
     time.sleep(0.5)
-    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=15)
+    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.15)
 
     place_in_bin(arm, item["bin"], dry_run=False)
 
