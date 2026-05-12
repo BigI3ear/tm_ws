@@ -19,17 +19,29 @@ from vision.claude_vision import analyze, capture_frame, capture_from_robot_cam,
 from arm_comms.tm5_connect import TM5
 
 # ---------------------------------------------------------------------------
-# Workspace calibration — update these to match your physical table setup
+# All positions are SUCTION TIP coordinates (calibrated 2026-05-12)
+# Scan pose = camera home for vision — pick positions are suction tip coords
 # ---------------------------------------------------------------------------
-TABLE_X_MIN =  300   # mm — left edge of camera FOV in robot frame
-TABLE_X_MAX =  600   # mm — right edge
-TABLE_Y_MIN = -200   # mm — far from robot
-TABLE_Y_MAX =  200   # mm — near robot
-PICK_Z_DOWN =   50   # mm — descent height for grasp
-PICK_Z_UP   =  200   # mm — travel height between poses
-TCP_RX, TCP_RY, TCP_RZ = 180, 0, 0  # top-down grasp orientation
 
-# Bin drop-off positions (robot Cartesian, mm)
+# Basket corners — suction tip at each corner (calibrated 2026-05-12)
+#   top-left:    (-295.45, 430.04)
+#   top-right:   ( -80.84, 454.93)
+#   bottom-left: (-221.21, 186.89)
+#   bottom-right: (-91.44, 231.16)
+BASKET_X_MIN = -295.45  # mm — left edge   (TODO: re-calibrate corners)
+BASKET_X_MAX =  -80.84  # mm — right edge  (TODO: re-calibrate corners)
+BASKET_Y_MIN =  430.00  # mm — near (bottom) (TODO: re-calibrate corners)
+BASKET_Y_MAX =  670.00  # mm — far (top)     (TODO: re-calibrate corners)
+
+BASKET_X     = -167.64  # mm — basket centre (calibrated 2026-05-12)
+BASKET_Y     =  549.72  # mm — basket centre (calibrated 2026-05-12)
+PICK_Z_DOWN  =  187.37  # mm — suction Z touching medicine at basket centre (calibrated 2026-05-12)
+PICK_Z_UP    =  250.0   # mm — safe travel height above basket
+
+# Grasp orientation — Rx=180 avoids IK singularity at 179.49
+TCP_RX, TCP_RY, TCP_RZ = 180.0, 0.0, -178.0
+
+# Bin drop-off positions (robot Cartesian, mm) — not yet calibrated
 BINS = {
     "A": (500,  150, PICK_Z_UP),   # Common / OTC medicines
     "B": (500,    0, PICK_Z_UP),   # Prescription
@@ -38,8 +50,9 @@ BINS = {
 
 
 def image_to_robot(pick_x: float, pick_y: float) -> tuple[float, float]:
-    rx = TABLE_X_MIN + pick_x * (TABLE_X_MAX - TABLE_X_MIN)
-    ry = TABLE_Y_MIN + (1 - pick_y) * (TABLE_Y_MAX - TABLE_Y_MIN)
+    """Map normalised image coords (0-1) to robot Cartesian mm using calibrated basket corners."""
+    rx = BASKET_X_MIN + pick_x * (BASKET_X_MAX - BASKET_X_MIN)
+    ry = BASKET_Y_MAX - pick_y * (BASKET_Y_MAX - BASKET_Y_MIN)
     return round(rx, 1), round(ry, 1)
 
 
@@ -84,7 +97,6 @@ def run(image_source, dry_run: bool, robot_cam_url: str | None = None):
             sys.exit(1)
         print("Connected.")
         arm.home()
-        arm.scan_pose()
         time.sleep(1)
 
     print("\nCapturing image...")
