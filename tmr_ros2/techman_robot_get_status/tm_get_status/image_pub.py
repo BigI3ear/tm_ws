@@ -103,7 +103,7 @@ class ImagePub(Node):
             # inference img here
             result = {
                 "message": "success",
-                "result": "NG", 
+                "result": "NG",
                 "score": 0.987
             }
         # detection

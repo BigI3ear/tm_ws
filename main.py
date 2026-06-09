@@ -41,11 +41,15 @@ PICK_Z_UP    =  250.0   # mm — safe travel height above basket
 # Grasp orientation — Rx=180 avoids IK singularity at 179.49
 TCP_RX, TCP_RY, TCP_RZ = 180.0, 0.0, -178.0
 
-# Bin drop-off positions (robot Cartesian, mm) — not yet calibrated
+# Bin drop-off position (Plane.003 in FBX, 699.3mm +X from basket centre)
+# Z approach at PICK_Z_UP, drop at bin top surface (221.7mm) + 30mm clearance
+BIN_X      =  531.7   # mm — estimated from FBX, verify physically
+BIN_Y      =  549.72  # mm — same Y as basket (confirmed FBX)
+BIN_Z_TOP  =  252.0   # mm — bin top surface 221.7mm + 30mm clearance
 BINS = {
-    "A": (500,  150, PICK_Z_UP),   # Common / OTC medicines
-    "B": (500,    0, PICK_Z_UP),   # Prescription
-    "C": (500, -150, PICK_Z_UP),   # Controlled / unknown
+    "A": (BIN_X, BIN_Y, PICK_Z_UP),
+    "B": (BIN_X, BIN_Y, PICK_Z_UP),
+    "C": (BIN_X, BIN_Y, PICK_Z_UP),
 }
 
 
@@ -62,7 +66,8 @@ def place_in_bin(arm: TM5, bin_id: str, dry_run: bool):
     if dry_run:
         print("    [dry-run] skipping arm motion")
         return
-    arm.move_cartesian(bx, by, bz, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
+    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
+    arm.move_cartesian(bx, by, BIN_Z_TOP,  TCP_RX, TCP_RY, TCP_RZ, speed=0.05)
     arm.suction_off()
     time.sleep(0.3)
     arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.15)

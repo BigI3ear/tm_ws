@@ -20,6 +20,63 @@ from pyzbar.pyzbar import decode as qr_decode
 
 ROBOT_CAM_URL = os.environ.get("ROBOT_CAM_URL", "http://localhost:6189/api/snapshot")
 DATASET_DIR = Path(os.environ.get("DATASET_DIR", Path(__file__).parent.parent.parent / "dataset" / "snapshots"))
+YOLO_WEIGHTS = Path(__file__).parent.parent.parent / "dataset" / "yolo" / "runs" / "thai_medicine_v1-4" / "weights" / "best.pt"
+
+_BIN_MAP = {
+    "Betadine":                    "A",
+    "Gentian_Violet":              "A",
+    "Leopard_Cough_Syrup":         "A",
+    "Siribuncha_Alcohol":          "A",
+    "Ya_That_Nam_Khao_White_Rabbit": "A",
+}
+
+
+def detect_with_yolo(frame: np.ndarray) -> list[dict] | None:
+    """
+    Run YOLOv8 on frame. Returns list of detections (one per class, highest conf wins)
+    or None if weights not found.
+    """
+    if not YOLO_WEIGHTS.exists():
+        return None
+    try:
+        from ultralytics import YOLO
+        model = YOLO(str(YOLO_WEIGHTS))
+        H, W = frame.shape[:2]
+        results = model(frame, conf=0.45, iou=0.6, imgsz=1280, verbose=False)[0]
+
+        # Keep only highest-confidence detection per class
+        best = {}
+        for box in results.boxes:
+            cls = int(box.cls)
+            conf = float(box.conf)
+            if cls not in best or conf > best[cls]["conf"]:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                best[cls] = {
+                    "conf": conf,
+                    "label": model.names[cls],
+                    "pick_x": round(((x1 + x2) / 2) / W, 3),
+                    "pick_y": round(((y1 + y2) / 2) / H, 3),
+                }
+
+        detections = []
+        for cls, item in sorted(best.items()):
+            label = item["label"]
+            detections.append({
+                "source":      "yolo",
+                "qr_data":     None,
+                "medicine":    label.replace("_", " "),
+                "label":       label,
+                "description": "",
+                "bin":         _BIN_MAP.get(label, "A"),
+                "action":      "pick_and_place",
+                "pick_x":      item["pick_x"],
+                "pick_y":      item["pick_y"],
+                "confidence":  "high" if item["conf"] >= 0.6 else "medium" if item["conf"] >= 0.4 else "low",
+            })
+        return detections
+    except Exception as e:
+        print(f"  YOLO error: {e}")
+        return None
 
 
 def _medicine_folder(label: str, bin_id: str) -> Path:
@@ -83,6 +140,21 @@ def scan_qr(frame) -> list[dict]:
     return results
 
 
+_BIN_RULES = """\
+Bin assignment rules:
+  A = Common / OTC — available without prescription, e.g.:
+      Paracetamol, Ibuprofen, antacids, vitamins, cough syrups (OTC),
+      Thai herbal/traditional medicines (ยาสมุนไพร, ยาธาตุ, ยาแผนโบราณ),
+      Ya That Nam Khao (ยาธาตุน้ำขาว), Yoki, Krabok, rehydration salts,
+      topical creams, eye drops (OTC), allergy tablets (OTC).
+  B = Prescription — requires a doctor's prescription, e.g.:
+      Statins, ACE inhibitors, ARBs, SSRIs, antidiabetics, antihypertensives,
+      Entresto, Januvia, Serlift, Valosine, Samsca, antibiotics, antivirals,
+      Thai hospital dispensary bags (ถุงยาโรงพยาบาล) with patient HN/name printed.
+  C = Controlled / Unknown — narcotics, psychotropics, or unreadable label.\
+"""
+
+
 def classify_medicine(medicine_code: str) -> dict:
     """
     Ask Claude what this medicine is and where to put it.
@@ -96,11 +168,12 @@ def classify_medicine(medicine_code: str) -> dict:
             "role": "user",
             "content": (
                 f"A robot arm scanned a QR code on a medicine tablet. The QR code says: '{medicine_code}'.\n"
+                f"{_BIN_RULES}\n"
                 "Return a JSON object with:\n"
                 "  medicine: full medicine name\n"
                 "  label: short consistent dataset folder name, e.g. 'Entresto_200mg' or 'Paracetamol_500mg' (no spaces, no special chars except underscore)\n"
                 "  description: one-line description (dosage, type)\n"
-                "  bin: which bin to place it in — 'A' (common/OTC), 'B' (prescription), 'C' (controlled/unknown)\n"
+                "  bin: which bin to place it in — 'A', 'B', or 'C' per the rules above\n"
                 "  action: 'pick_and_place'\n"
                 "Return ONLY valid JSON, no markdown."
             )
@@ -150,6 +223,136 @@ def _prepare_image(frame) -> bytes:
     raise RuntimeError("Could not encode frame within 4 MB limit")
 
 
+def detect_all_medicines(frame) -> list[dict]:
+    """
+    Detection pipeline:
+      1. YOLO (fast, local) — detects known Thai medicines, one per class, no duplicates
+      2. Claude API — identifies remaining/unknown items (English meds, new items)
+      3. CLIP — second opinion for Claude low-confidence Thai items
+    Returns list of {medicine, label, description, bin, confidence, pick_x, pick_y, source}
+    """
+    # Stage 1: YOLO for known Thai medicines
+    yolo_results = detect_with_yolo(frame) or []
+    if yolo_results:
+        print(f"  YOLO detected {len(yolo_results)} Thai medicines")
+
+    # Stage 2: Claude for English/unknown meds not covered by YOLO
+    print("  Calling Claude for English/unknown medicines...")
+    img_bytes = _prepare_image(frame)
+    img_b64 = base64.b64encode(img_bytes).decode()
+
+    client = anthropic.Anthropic(timeout=30.0)
+    response = client.messages.create(
+        model="claude-opus-4-7",
+        max_tokens=1024,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64},
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "You are a medicine detection system looking at a robot camera image of a basket. "
+                        "Your job is to find and report EVERY physical medicine object in the frame — "
+                        "do NOT skip anything just because it is partially covered, in a plastic bag, "
+                        "shows only a barcode, or the label is hard to read.\n\n"
+                        + (lambda yr: (
+                            "NOTE: These Thai medicines have ALREADY been identified by a local model — "
+                            "DO NOT report them again: " + ", ".join(r["medicine"] for r in yr) + ". "
+                            "Skip any object at or near their positions: " +
+                            ", ".join("({},{})".format(r["pick_x"], r["pick_y"]) for r in yr) +
+                            ".\n\n"
+                        ) if yr else "")(yolo_results) +
+                        "Scan the image systematically: top-left → top-right → middle → bottom-left → bottom-right. "
+                        "For each distinct physical object (bottle, tube, blister pack, sachet, bag) NOT already listed above: "
+                        "report it even if you can only see part of the label or packaging. "
+                        "Use color, shape, and partial text to identify it. "
+                        "If you cannot read the label at all, still report it as 'Unknown' with your best "
+                        "description of what you see (color, shape, size).\n\n"
+                        "Labels may be in Thai (ภาษาไทย) or English — read whichever is visible.\n"
+                        f"{_BIN_RULES}\n"
+                        "Return a JSON array. Each element:\n"
+                        "  medicine: full medicine name (or 'Unknown' if unreadable)\n"
+                        "  label: short folder-safe name e.g. 'Betadine_Solution' (underscores, no spaces)\n"
+                        "  description: one-line description including color and shape if label is unclear\n"
+                        "  bin: 'A', 'B', or 'C' per rules above (use 'C' if unknown)\n"
+                        "  confidence: 'high', 'medium', or 'low'\n"
+                        "  cx: horizontal centre of this medicine as fraction 0.0–1.0 (left=0, right=1)\n"
+                        "  cy: vertical centre as fraction 0.0–1.0 (top=0, bottom=1)\n"
+                        "Return ONLY a valid JSON array, no markdown, no extra text. "
+                        "Return [] only if the basket is completely empty or all items are already listed above."
+                    ),
+                },
+            ],
+        }]
+    )
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
+    items = json.loads(raw)
+    if not isinstance(items, list):
+        items = [items]
+
+    # CLIP second-opinion for low-confidence items
+    h, w = frame.shape[:2]
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from thai_visual import match as clip_match, DB_PATH
+        clip_available = DB_PATH.exists()
+    except Exception:
+        clip_available = False
+
+    results = []
+    for item in items:
+        cx = float(item.get("cx", 0.5))
+        cy = float(item.get("cy", 0.5))
+        confidence = item.get("confidence", "low")
+
+        if clip_available and confidence in ("low", "medium"):
+            # Crop a region around the detected medicine centre for CLIP
+            crop_w, crop_h = int(w * 0.35), int(h * 0.35)
+            x1 = max(0, int(cx * w) - crop_w // 2)
+            y1 = max(0, int(cy * h) - crop_h // 2)
+            x2 = min(w, x1 + crop_w)
+            y2 = min(h, y1 + crop_h)
+            crop = frame[y1:y2, x1:x2]
+            clip_result = clip_match(crop)
+            if clip_result and clip_result["score"] >= 0.75:
+                item["medicine"] = clip_result["medicine"]
+                item["label"] = clip_result["label"]
+                item["confidence"] = clip_result["confidence"]
+                item["source"] = "clip"
+                item["bin"] = _BIN_MAP.get(clip_result["label"], item.get("bin", "A"))
+            else:
+                item["source"] = "vision"
+        else:
+            item["source"] = "vision" if not item.get("source") else item["source"]
+
+        lbl = item.get("label", "Unknown")
+        # Skip if YOLO already identified this Thai medicine
+        if any(r["label"] == lbl for r in yolo_results):
+            continue
+
+        results.append({
+            "source":      item.get("source", "vision"),
+            "qr_data":     None,
+            "medicine":    item.get("medicine", "Unknown"),
+            "label":       lbl,
+            "description": item.get("description", ""),
+            "bin":         item.get("bin", "C"),
+            "action":      "pick_and_place",
+            "pick_x":      round(cx, 3),
+            "pick_y":      round(cy, 3),
+            "confidence":  item.get("confidence", "low"),
+        })
+
+    # Merge: YOLO Thai meds + Claude English/unknown meds
+    return yolo_results + results
+
+
 def classify_from_image(frame) -> dict:
     """
     No QR found — send the image to Claude vision to visually identify the medicine.
@@ -173,12 +376,14 @@ def classify_from_image(frame) -> dict:
                     "type": "text",
                     "text": (
                         "This is an image from a robot arm camera looking at a medicine tablet/blister pack. "
-                        "No QR code was detected. Identify the medicine visually.\n"
+                        "No QR code was detected. Identify the medicine visually. "
+                        "The label may be in Thai (ภาษาไทย) or English — read whichever is present.\n"
+                        f"{_BIN_RULES}\n"
                         "Return a JSON object with:\n"
                         "  medicine: full medicine name (or 'Unknown' if unreadable)\n"
                         "  label: short consistent dataset folder name, e.g. 'Entresto_200mg' or 'Paracetamol_500mg' (no spaces, no special chars except underscore)\n"
                         "  description: one-line description (dosage, type)\n"
-                        "  bin: 'A' (common/OTC), 'B' (prescription), 'C' (controlled/unknown)\n"
+                        "  bin: 'A', 'B', or 'C' per the rules above\n"
                         "  action: 'pick_and_place'\n"
                         "  confidence: 'high', 'medium', or 'low'\n"
                         "Return ONLY valid JSON, no markdown."

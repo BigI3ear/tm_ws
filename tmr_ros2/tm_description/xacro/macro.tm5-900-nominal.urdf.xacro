@@ -282,7 +282,45 @@
     <child link="${prefix}flange" />
     <origin rpy="0.000000 0.000000 0.000000" xyz="0.000000 0.000000 0.000000" />
   </joint>
+
+  <!-- Suction tool attached at flange — visual only, no collision to avoid false self-collision in MoveIt2 -->
+  <link name="${prefix}suction_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tm_description/meshes/tm5-900/visual/suction_tool.stl" scale="1 1 1"/>
+      </geometry>
+      <material name="dark_grey">
+        <color rgba="0.3 0.3 0.3 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="${prefix}suction_fixed_joint" type="fixed">
+    <parent link="${prefix}flange"/>
+    <child link="${prefix}suction_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+  </joint>
+
+
 <!--LinkDescription-->
+
+  <!-- Static environment: table, basket, bins from TableWArm.fbx -->
+  <link name="environment_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://tm_description/meshes/tm5-900/visual/environment.stl" scale="0.8 0.8 0.8"/>
+      </geometry>
+      <material name="light_grey">
+        <color rgba="0.8 0.8 0.8 1.0"/>
+      </material>
+    </visual>
+  </link>
+  <joint name="environment_fixed_joint" type="fixed">
+    <parent link="${prefix}base"/>
+    <child link="environment_link"/>
+    <origin rpy="0 0 3.14159" xyz="0 -0.14 -0.9073"/>
+  </joint>
 
   </xacro:macro>
 
