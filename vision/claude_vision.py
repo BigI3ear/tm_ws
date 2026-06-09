@@ -259,6 +259,13 @@ def detect_all_medicines(frame) -> list[dict]:
                         "Your job is to find and report EVERY physical medicine object in the frame — "
                         "do NOT skip anything just because it is partially covered, in a plastic bag, "
                         "shows only a barcode, or the label is hard to read.\n\n"
+                        "IMPORTANT — canonical names for known Thai medicines. If you identify any of these, "
+                        "you MUST use exactly this medicine name and label:\n"
+                        "  - Betadine antiseptic (yellow/brown bottle) → medicine='Betadine', label='Betadine'\n"
+                        "  - Gentian Violet (small dark purple bottle) → medicine='Gentian Violet', label='Gentian_Violet'\n"
+                        "  - Leopard cough syrup (orange hexagonal bottle, Thai label) → medicine='Leopard Cough Syrup', label='Leopard_Cough_Syrup'\n"
+                        "  - Siribuncha isopropyl/rubbing alcohol (blue spray bottle) → medicine='Siribuncha Alcohol', label='Siribuncha_Alcohol'\n"
+                        "  - Ya That Nam Khao White Rabbit / ยาธาตุน้ำขาว (white tube/bottle, rabbit logo) → medicine='Ya That Nam Khao White Rabbit', label='Ya_That_Nam_Khao_White_Rabbit'\n\n"
                         + (lambda yr: (
                             "NOTE: These Thai medicines have ALREADY been identified by a local model — "
                             "DO NOT report them again: " + ", ".join(r["medicine"] for r in yr) + ". "
@@ -336,13 +343,15 @@ def detect_all_medicines(frame) -> list[dict]:
         if any(r["label"] == lbl for r in yolo_results):
             continue
 
+        # If Claude identified a known Thai medicine, enforce correct bin
+        bin_id = _BIN_MAP.get(lbl, item.get("bin", "C"))
         results.append({
             "source":      item.get("source", "vision"),
             "qr_data":     None,
             "medicine":    item.get("medicine", "Unknown"),
             "label":       lbl,
             "description": item.get("description", ""),
-            "bin":         item.get("bin", "C"),
+            "bin":         bin_id,
             "action":      "pick_and_place",
             "pick_x":      round(cx, 3),
             "pick_y":      round(cy, 3),
