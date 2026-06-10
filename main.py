@@ -41,11 +41,10 @@ PICK_Z_UP    =  250.0   # mm — safe travel height above basket
 # Grasp orientation — Rx=180 avoids IK singularity at 179.49
 TCP_RX, TCP_RY, TCP_RZ = 180.0, 0.0, -178.0
 
-# Bin drop-off position (Plane.003 in FBX, 699.3mm +X from basket centre)
-# Z approach at PICK_Z_UP, drop at bin top surface (221.7mm) + 30mm clearance
-BIN_X      =  531.7   # mm — estimated from FBX, verify physically
-BIN_Y      =  549.72  # mm — same Y as basket (confirmed FBX)
-BIN_Z_TOP  =  252.0   # mm — bin top surface 221.7mm + 30mm clearance
+# Bin drop-off position (calibrated 2026-06-10 — physically jogged & read from /tool_pose)
+BIN_X      =  174.32  # mm
+BIN_Y      =  702.61  # mm
+BIN_Z_TOP  =  288.26  # mm
 BINS = {
     "A": (BIN_X, BIN_Y, PICK_Z_UP),
     "B": (BIN_X, BIN_Y, PICK_Z_UP),
@@ -66,11 +65,12 @@ def place_in_bin(arm: TM5, bin_id: str, dry_run: bool):
     if dry_run:
         print("    [dry-run] skipping arm motion")
         return
-    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
-    arm.move_cartesian(bx, by, BIN_Z_TOP,  TCP_RX, TCP_RY, TCP_RZ, speed=0.05)
+    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.5)
+    arm.move_cartesian(bx, by, BIN_Z_TOP,  TCP_RX, TCP_RY, TCP_RZ, speed=0.1)
     arm.suction_off()
     time.sleep(0.3)
-    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.15)
+    arm.move_cartesian(bx, by, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.4)
+    arm.home()
 
 
 def pick_medicine(arm: TM5, item: dict, dry_run: bool):
@@ -83,11 +83,11 @@ def pick_medicine(arm: TM5, item: dict, dry_run: bool):
         print("    [dry-run] skipping arm motion")
         return
 
-    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.2)
-    arm.move_cartesian(x, y, PICK_Z_DOWN, TCP_RX, TCP_RY, TCP_RZ, speed=0.05)
+    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.5)
+    arm.move_cartesian(x, y, PICK_Z_DOWN, TCP_RX, TCP_RY, TCP_RZ, speed=0.1)
     arm.suction_on()
     time.sleep(0.5)
-    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.15)
+    arm.move_cartesian(x, y, PICK_Z_UP, TCP_RX, TCP_RY, TCP_RZ, speed=0.4)
 
     place_in_bin(arm, item["bin"], dry_run=False)
 

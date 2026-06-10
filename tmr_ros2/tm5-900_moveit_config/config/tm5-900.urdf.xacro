@@ -11,4 +11,27 @@
 
     <xacro:tm5-900_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
 
+    <!-- Visual-only environment reference: table + 4 basket trays from FBX,
+         scaled 0.79x to match real robot dimensions (FBX was ~1.26x oversized,
+         confirmed by comparing arm_1/arm_2 link lengths to URDF DH params) -->
+    <link name="env_scene">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="package://tm_description/meshes/environment/env_scene.stl" scale="1 1 1"/>
+            </geometry>
+            <material name="env_table_material">
+                <color rgba="0.7 0.7 0.7 1.0"/>
+            </material>
+        </visual>
+    </link>
+
+    <!-- Mesh was exported in FBX-world coords scaled by 0.79, so shift by
+         -0.79 * robot-base empty origin (0,0,0.784) = (0,0,-0.61936) -->
+    <joint name="env_scene_joint" type="fixed">
+        <parent link="link_0"/>
+        <child link="env_scene"/>
+        <origin xyz="0 0 -0.61936" rpy="0 0 0"/>
+    </joint>
+
 </robot>
