@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>TM5-900 · Operator Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg0: #06080a;
+    --bg1: #0b0e12;
+    --bg2: #101418;
+    --bg3: #161c24;
+    --border: #1e2a36;
+    --border-hi: #2c3f54;
+    --amber: #e89010;
+    --amber-dim: #7a4a06;
+    --amber-glow: rgba(232,144,16,0.12);
+    --cyan: #00c2d4;
+    --green: #1aad60;
+    --red: #c0392b;
+    --yellow: #d4b800;
+    --text: #cec4b8;
+    --text-dim: #566472;
+    --text-muted: #2e3d4a;
+    --font: 'Barlow Condensed', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg0);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    overflow: hidden;
+  }
+
+  /* subtle dot grid */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #app {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-rows: 52px 1fr 36px;
+    height: 100vh;
+  }
+
+  /* ── TOP BAR ── */
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg1);
+  }
+
+  .tb-title {
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-right: auto;
+  }
+  .tb-title span { color: var(--text-dim); font-weight: 300; }
+
+  .tb-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    height: 100%;
+    border-left: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+  .tb-chip .label { color: var(--text-muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse-green 2s infinite; }
+  .dot.red   { background: var(--red); }
+  .dot.amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: pulse-amber 1.5s infinite; }
+  .dot.grey  { background: var(--text-muted); }
+
+  @keyframes pulse-green { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  @keyframes pulse-amber { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  #clock { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--amber); letter-spacing: 0.08em; }
+
+  /* ── MAIN GRID ── */
+  #main {
+    display: grid;
+    grid-template-columns: 1fr 280px 320px;
+    overflow: hidden;
+  }
+
+  /* ── CAMERA PANEL ── */
+  #cam-panel {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .panel-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .panel-subtitle { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+
+  #cam-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+  }
+
+  /* targeting reticle corners */
+  #cam-wrap::before, #cam-wrap::after,
+  #cam-inner::before, #cam-inner::after {
+    content: '';
+    position: absolute;
+    width: 20px; height: 20px;
+    z-index: 3;
+    pointer-events: none;
+  }
+  #cam-wrap::before  { top: 10px; left: 10px;  border-top: 2px solid var(--amber); border-left: 2px solid var(--amber); }
+  #cam-wrap::after   { top: 10px; right: 10px; border-top: 2px solid var(--amber); border-right: 2px solid var(--amber); }
+  #cam-inner::before { bottom: 10px; left: 10px;  border-bottom: 2px solid var(--amber); border-left: 2px solid var(--amber); }
+  #cam-inner::after  { bottom: 10px; right: 10px; border-bottom: 2px solid var(--amber); border-right: 2px solid var(--amber); }
+
+  #cam-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  #cam-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    opacity: 0.95;
+  }
+  #cam-img.loading { opacity: 0.3; }
+
+  #cam-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  #cam-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+  #cam-placeholder .icon { font-size: 40px; opacity: 0.3; }
+
+  #cam-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg1);
+  }
+
+  #scan-btn {
+    padding: 8px 24px;
+    background: transparent;
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  #scan-btn:hover:not(:disabled) {
+    background: var(--amber-glow);
+    box-shadow: 0 0 16px rgba(232,144,16,0.25);
+  }
+  #scan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #scan-btn.scanning::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 200%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(232,144,16,0.3), transparent);
+    animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { to { left: 100%; } }
+
+  #scan-meta { font-family: var(--mono); font-size: 10px; color: var(--text-dim); line-height: 1.6; }
+
+  /* ── MEDICINE LIST PANEL ── */
+  #med-panel {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  #med-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  #med-list::-webkit-scrollbar { width: 3px; }
+  #med-list::-webkit-scrollbar-track { background: transparent; }
+  #med-list::-webkit-scrollbar-thumb { background: var(--border-hi); }
+
+  .med-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    line-height: 2;
+  }
+
+  .med-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+    position: relative;
+    border-left: 3px solid transparent;
+  }
+  .med-item:hover { background: var(--bg2); }
+  .med-item.selected {
+    background: var(--amber-glow);
+    border-left-color: var(--amber);
+  }
+
+  .med-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+    padding-right: 36px;
+  }
+  .med-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .med-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .bin-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    border: 1px solid;
+  }
+  .bin-A { color: var(--green); border-color: var(--green); }
+  .bin-B { color: var(--cyan); border-color: var(--cyan); }
+  .bin-C { color: var(--yellow); border-color: var(--yellow); }
+
+  .med-pos {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .med-src {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .conf-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .conf-high { background: var(--green); }
+  .conf-medium { background: var(--yellow); }
+  .conf-low { background: var(--red); }
+
+  .med-num {
+    position: absolute;
+    top: 12px; right: 12px;
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+
+  #med-footer {
+    flex-shrink: 0;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg1);
+  }
+
+  #pick-btn {
+    width: 100%;
+    padding: 10px;
+    background: var(--amber);
+    border: none;
+    color: #000;
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.15s, box-shadow 0.15s;
+  }
+  #pick-btn:hover:not(:disabled) { box-shadow: 0 0 20px rgba(232,144,16,0.4); }
+  #pick-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+  #pick-status {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: center;
+    min-height: 16px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── RIGHT PANEL ── */
+  #right-panel {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+
+  /* JOINT ANGLES */
+  #joints-panel {
+    border-bottom: 1px solid var(--border);
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .joints-grid {
+    padding: 10px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .joint-row {
+    display: grid;
+    grid-template-columns: 28px 1fr 60px;
+    align-items: center;
+    gap: 10px;
+  }
+  .joint-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+  .joint-bar-wrap {
+    height: 4px;
+    background: var(--bg3);
+    border-radius: 0;
+    overflow: hidden;
+    position: relative;
+  }
+  .joint-bar {
+    height: 100%;
+    background: var(--cyan);
+    transition: width 0.4s ease;
+    min-width: 2px;
+  }
+  .joint-val {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--cyan);
+    text-align: right;
+    letter-spacing: 0.02em;
+  }
+
+  /* LOG */
+  #log-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #log-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.7;
+  }
+  #log-body::-webkit-scrollbar { width: 3px; }
+  #log-body::-webkit-scrollbar-track { background: transparent; }
+  #log-body::-webkit-scrollbar-thumb { background: var(--border-hi); }
+
+  .log-entry {
+    display: flex;
+    gap: 8px;
+    padding: 1px 14px;
+    animation: fade-in 0.2s ease;
+  }
+  .log-entry:hover { background: var(--bg2); }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+  .log-time { color: var(--text-muted); flex-shrink: 0; }
+  .log-lvl  { flex-shrink: 0; width: 38px; font-weight: 700; letter-spacing: 0.05em; }
+  .log-msg  { color: var(--text-dim); word-break: break-all; }
+
+  .log-INFO .log-lvl { color: var(--green); }
+  .log-WARN .log-lvl { color: var(--yellow); }
+  .log-ERROR .log-lvl { color: var(--red); }
+  .log-PICK .log-lvl { color: var(--amber); }
+  .log-PICK .log-msg { color: var(--text); }
+  .log-RECV .log-lvl { color: var(--cyan); }
+  .log-SEND .log-lvl { color: var(--cyan); }
+
+  /* blinking cursor at bottom of log */
+  #log-cursor {
+    width: 7px; height: 13px;
+    background: var(--amber);
+    display: inline-block;
+    animation: blink 1s step-end infinite;
+    margin: 2px 14px;
+    vertical-align: middle;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── BOTTOM BAR ── */
+  #bottombar {
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 0;
+    border-top: 1px solid var(--border);
+    background: var(--bg1);
+  }
+
+  .bb-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 16px;
+    height: 100%;
+    border-right: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 0.05em;
+  }
+  .bb-item:first-child { padding-left: 0; }
+  .bb-item .val { color: var(--text-dim); }
+
+  #bb-last-pick { margin-left: auto; border-right: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="tb-title">TM5-900 <span>·</span> OPERATOR CONSOLE</div>
+
+    <div class="tb-chip">
+      <span class="label">ROBOT</span>
+      <div class="dot grey" id="dot-robot"></div>
+      <span id="status-robot" style="min-width:80px">OFFLINE</span>
+    </div>
+    <div class="tb-chip">
+      <span class="label">VISION</span>
+      <div class="dot grey" id="dot-vision"></div>
+      <span id="status-vision">—</span>
+    </div>
+    <div class="tb-chip">
+      <span class="label">TMFLOW</span>
+      <div class="dot grey" id="dot-tmflow"></div>
+      <span id="status-tmflow">IDLE</span>
+    </div>
+    <div class="tb-chip">
+      <span id="clock">00:00:00</span>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+
+    <!-- CAMERA -->
+    <div id="cam-panel">
+      <div class="panel-header">
+        <span class="panel-title">Basket View</span>
+        <span class="panel-subtitle" id="cam-res">2592 × 1944</span>
+      </div>
+      <div id="cam-wrap">
+        <div id="cam-inner">
+          <img id="cam-img" alt="">
+          <canvas id="cam-overlay"></canvas>
+          <div id="cam-placeholder">
+            <div class="icon">⬡</div>
+            <div>NO CAMERA FEED</div>
+            <div style="color:var(--text-muted);font-size:9px">Press SCAN to capture</div>
+          </div>
+        </div>
+      </div>
+      <div id="cam-footer">
+        <button id="scan-btn" onclick="runScan()">⬡ SCAN</button>
+        <div id="scan-meta">
+          <div id="scan-last">—</div>
+          <div id="scan-count" style="color:var(--text-muted)">No items detected</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MEDICINE LIST -->
+    <div id="med-panel">
+      <div class="panel-header">
+        <span class="panel-title">Detected Items</span>
+        <span class="panel-subtitle" id="med-header-count">0 items</span>
+      </div>
+      <div id="med-list">
+        <div class="med-empty">
+          RUN SCAN TO DETECT<br>MEDICINES IN BASKET
+        </div>
+      </div>
+      <div id="med-footer">
+        <button id="pick-btn" disabled onclick="confirmPick()">CONFIRM PICK</button>
+        <div id="pick-status">No medicine selected</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: JOINTS + LOG -->
+    <div id="right-panel">
+      <div id="joints-panel">
+        <div class="panel-header">
+          <span class="panel-title">Joint Angles</span>
+          <span class="panel-subtitle" id="joints-update">—</span>
+        </div>
+        <div class="joints-grid" id="joints-grid">
+          <!-- rendered by JS -->
+        </div>
+      </div>
+      <div id="log-panel">
+        <div class="panel-header">
+          <span class="panel-title">Operation Log</span>
+          <button onclick="clearLog()" style="background:none;border:none;color:var(--text-muted);font-family:var(--mono);font-size:9px;cursor:pointer;letter-spacing:0.05em">CLEAR</button>
+        </div>
+        <div id="log-body">
+          <span id="log-cursor"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottombar">
+    <div class="bb-item">
+      <span>ROBOT IP</span><span class="val">192.168.1.102</span>
+    </div>
+    <div class="bb-item">
+      <span>PICK Z FLOOR</span><span class="val" id="bb-pickz">—</span>
+    </div>
+    <div class="bb-item">
+      <span>BASKET</span><span class="val">260 × 320 mm</span>
+    </div>
+    <div class="bb-item" id="bb-last-pick">
+      <span>LAST PICK</span><span class="val" id="bb-last-pick-val">—</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let scanResults = [];
+let selectedIdx = null;
+let imgLoaded = false;
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0') + ':' +
+    String(now.getSeconds()).padStart(2,'0');
+}
+setInterval(tick, 1000); tick();
+
+// ── Joint angle rendering ──────────────────────────────────────────────────
+const JOINT_NAMES = ['J1','J2','J3','J4','J5','J6'];
+const JOINT_RANGE = 180; // degrees, ±180
+
+function initJoints() {
+  const grid = document.getElementById('joints-grid');
+  grid.innerHTML = JOINT_NAMES.map((n,i) => `
+    <div class="joint-row" id="jr-${i}">
+      <div class="joint-label">${n}</div>
+      <div class="joint-bar-wrap"><div class="joint-bar" id="jb-${i}" style="width:50%"></div></div>
+      <div class="joint-val" id="jv-${i}">0.00°</div>
+    </div>`).join('');
+}
+
+function updateJoints(angles) {
+  angles.forEach((deg, i) => {
+    const pct = ((deg + JOINT_RANGE) / (JOINT_RANGE * 2)) * 100;
+    const bar = document.getElementById(`jb-${i}`);
+    const val = document.getElementById(`jv-${i}`);
+    if (bar) bar.style.width = Math.max(1, Math.min(100, pct)) + '%';
+    if (val) val.textContent = (deg >= 0 ? '+' : '') + deg.toFixed(1) + '°';
+  });
+  document.getElementById('joints-update').textContent = new Date().toLocaleTimeString();
+}
+
+initJoints();
+
+// ── Status polling ─────────────────────────────────────────────────────────
+function setDot(id, state) {
+  const d = document.getElementById(id);
+  d.className = 'dot ' + (state === 'ok' ? 'green' : state === 'active' ? 'amber' : 'grey');
+}
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) return;
+    const s = await r.json();
+
+    setDot('dot-robot', s.robot_connected ? 'ok' : 'grey');
+    document.getElementById('status-robot').textContent = s.robot_connected ? 'CONNECTED' : 'OFFLINE';
+
+    setDot('dot-vision', s.vision_server_ok ? 'ok' : 'grey');
+    document.getElementById('status-vision').textContent = s.vision_server_ok ? 'OK' : 'OFFLINE';
+
+    setDot('dot-tmflow', s.tmflow_connected ? 'active' : 'grey');
+    document.getElementById('status-tmflow').textContent = s.tmflow_connected ? 'ACTIVE' : 'IDLE';
+
+    if (s.joint_angles) updateJoints(s.joint_angles);
+
+    if (s.last_pick) {
+      document.getElementById('bb-last-pick-val').textContent =
+        `${s.last_pick.medicine}  ${s.last_pick.time}`;
+    }
+
+    // If TMflow just completed a pick, show it
+    if (s.selected === null && selectedIdx !== null) {
+      // pick was consumed
+    }
+  } catch(e) {}
+}
+
+setInterval(pollStatus, 2000);
+pollStatus();
+
+// ── Camera refresh ─────────────────────────────────────────────────────────
+function refreshCamera() {
+  const img = document.getElementById('cam-img');
+  img.src = '/api/snapshot?' + Date.now();
+  img.onload = () => {
+    document.getElementById('cam-placeholder').style.display = 'none';
+    imgLoaded = true;
+    drawOverlays();
+  };
+  img.onerror = () => {
+    document.getElementById('cam-placeholder').style.display = 'flex';
+    imgLoaded = false;
+  };
+}
+
+// ── Canvas overlays (highlight detected medicines) ─────────────────────────
+function drawOverlays() {
+  const img = document.getElementById('cam-img');
+  const canvas = document.getElementById('cam-overlay');
+  if (!imgLoaded || !scanResults.length) {
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+  canvas.width = img.offsetWidth;
+  canvas.height = img.offsetHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const W = canvas.width, H = canvas.height;
+  const BOX = 60;
+
+  scanResults.forEach((item, i) => {
+    const cx = item.pick_x * W;
+    const cy = item.pick_y * H;
+    const isSelected = i === selectedIdx;
+
+    ctx.strokeStyle = isSelected ? '#e89010' : 'rgba(0,194,212,0.7)';
+    ctx.lineWidth = isSelected ? 2 : 1;
+    ctx.strokeRect(cx - BOX/2, cy - BOX/2, BOX, BOX);
+
+    // corner ticks
+    const t = 8;
+    ctx.lineWidth = 2;
+    const corners = [
+      [cx-BOX/2, cy-BOX/2,  t, 0,  0, t],
+      [cx+BOX/2, cy-BOX/2, -t, 0,  0, t],
+      [cx-BOX/2, cy+BOX/2,  t, 0,  0,-t],
+      [cx+BOX/2, cy+BOX/2, -t, 0,  0,-t],
+    ];
+    corners.forEach(([x,y,dx1,dy1,dx2,dy2]) => {
+      ctx.beginPath();
+      ctx.moveTo(x,y); ctx.lineTo(x+dx1,y+dy1);
+      ctx.moveTo(x,y); ctx.lineTo(x+dx2,y+dy2);
+      ctx.stroke();
+    });
+
+    // label
+    ctx.fillStyle = isSelected ? 'rgba(232,144,16,0.85)' : 'rgba(0,0,0,0.75)';
+    const label = `${i+1}. ${item.medicine}`;
+    const lw = Math.min(ctx.measureText(label).width + 12, 200);
+    ctx.fillRect(cx - BOX/2, cy - BOX/2 - 18, lw, 18);
+    ctx.fillStyle = isSelected ? '#000' : (isSelected ? '#fff' : '#a0c8d0');
+    ctx.font = '500 10px JetBrains Mono';
+    ctx.fillText(label, cx - BOX/2 + 6, cy - BOX/2 - 5);
+  });
+}
+
+// ── Scan ───────────────────────────────────────────────────────────────────
+async function runScan() {
+  const btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  btn.classList.add('scanning');
+  btn.textContent = '⟳ SCANNING…';
+  selectedIdx = null;
+  updatePickButton();
+
+  try {
+    refreshCamera();
+    const r = await fetch('/api/scan', { method: 'POST' });
+    const data = await r.json();
+
+    if (!r.ok || data.error) {
+      document.getElementById('scan-last').textContent = 'Scan failed — ' + (data.error || 'unknown');
+      return;
+    }
+
+    scanResults = data;
+    renderMedList();
+    drawOverlays();
+
+    const now = new Date().toLocaleTimeString();
+    document.getElementById('scan-last').textContent = `Last scan: ${now}`;
+    document.getElementById('scan-count').textContent =
+      data.length ? `${data.length} item${data.length>1?'s':''} detected` : 'No items detected';
+    document.getElementById('med-header-count').textContent = `${data.length} item${data.length!==1?'s':''}`;
+  } catch(e) {
+    document.getElementById('scan-last').textContent = 'Scan error';
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('scanning');
+    btn.textContent = '⬡ SCAN';
+  }
+}
+
+// ── Medicine list ──────────────────────────────────────────────────────────
+const BIN_LABELS = { A: 'BIN A · COMMON', B: 'BIN B · PRESCRIPTION', C: 'BIN C · CONTROLLED' };
+
+function renderMedList() {
+  const list = document.getElementById('med-list');
+  if (!scanResults.length) {
+    list.innerHTML = '<div class="med-empty">RUN SCAN TO DETECT<br>MEDICINES IN BASKET</div>';
+    return;
+  }
+  list.innerHTML = scanResults.map((item, i) => `
+    <div class="med-item${i===selectedIdx?' selected':''}" onclick="selectMed(${i})">
+      <div class="med-num">${i+1}</div>
+      <div class="med-name">${escHtml(item.medicine)}</div>
+      <div class="med-desc">${escHtml(item.description||'—')}</div>
+      <div class="med-meta">
+        <div class="bin-tag bin-${item.bin}">${BIN_LABELS[item.bin]||'BIN '+item.bin}</div>
+        <div class="med-pos">${item.robot_x}, ${item.robot_y} mm</div>
+        <div class="conf-dot conf-${item.confidence}"></div>
+        <div class="med-src">${item.source}</div>
+      </div>
+    </div>`).join('');
+}
+
+function selectMed(i) {
+  selectedIdx = i;
+  renderMedList();
+  drawOverlays();
+  updatePickButton();
+}
+
+function updatePickButton() {
+  const btn = document.getElementById('pick-btn');
+  const status = document.getElementById('pick-status');
+  if (selectedIdx === null || !scanResults[selectedIdx]) {
+    btn.disabled = true;
+    status.textContent = 'No medicine selected';
+  } else {
+    btn.disabled = false;
+    const item = scanResults[selectedIdx];
+    status.textContent = `Ready: ${item.medicine} → (${item.robot_x}, ${item.robot_y}) mm`;
+  }
+}
+
+async function confirmPick() {
+  if (selectedIdx === null) return;
+  const item = scanResults[selectedIdx];
+  const btn = document.getElementById('pick-btn');
+  btn.disabled = true;
+  btn.textContent = 'QUEUED — AWAITING TMFLOW…';
+
+  try {
+    await fetch('/api/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+    document.getElementById('pick-status').textContent =
+      `✓ Queued: ${item.medicine} — TMflow will pick on next trigger`;
+    // grey out selected item
+    const el = document.querySelector('.med-item.selected');
+    if (el) el.style.opacity = '0.4';
+    selectedIdx = null;
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'CONFIRM PICK';
+    document.getElementById('pick-status').textContent = 'Error sending pick command';
+  }
+  setTimeout(() => {
+    btn.textContent = 'CONFIRM PICK';
+    updatePickButton();
+  }, 3000);
+}
+
+// ── Log SSE ────────────────────────────────────────────────────────────────
+const MAX_LOG = 300;
+let logCount = 0;
+
+function appendLog(entry) {
+  const body = document.getElementById('log-body');
+  const cursor = document.getElementById('log-cursor');
+
+  const div = document.createElement('div');
+  div.className = `log-entry log-${entry.lvl}`;
+  div.innerHTML = `<span class="log-time">${entry.t}</span><span class="log-lvl">${entry.lvl}</span><span class="log-msg">${escHtml(entry.msg)}</span>`;
+  body.insertBefore(div, cursor);
+
+  logCount++;
+  if (logCount > MAX_LOG) {
+    const entries = body.querySelectorAll('.log-entry');
+    if (entries.length > MAX_LOG) entries[0].remove();
+  }
+  cursor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function clearLog() {
+  const body = document.getElementById('log-body');
+  body.querySelectorAll('.log-entry').forEach(e => e.remove());
+  logCount = 0;
+}
+
+function connectLogStream() {
+  const es = new EventSource('/api/log-stream');
+  es.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.ping) return;
+      appendLog(data);
+    } catch(err) {}
+  };
+  es.onerror = () => setTimeout(connectLogStream, 3000);
+}
+connectLogStream();
+
+// ── Resize canvas on window resize ────────────────────────────────────────
+window.addEventListener('resize', drawOverlays);
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
