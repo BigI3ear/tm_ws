@@ -27,7 +27,15 @@ from main import image_to_robot
 
 HOST = "0.0.0.0"
 PORT = 6190
-SNAPSHOT_URL = "http://localhost:6189/api/snapshot"
+
+# TM controller shares its Vision image folder over SMB on the local network.
+# Mount the share at the lab and set this to the local mount point, e.g.:
+#   sudo mount -t cifs //192.168.1.102/<share_name> /mnt/tm_vision -o guest
+# Then set TM_VISION_MOUNT = "/mnt/tm_vision"
+# The path received from AI_Path_Send looks like:
+#   "Digital_Twin\Vision1\2026-06-11\source\18-47-58_368.png"
+# which maps to: TM_VISION_MOUNT / <that path (backslashes → forward slashes)>
+TM_VISION_MOUNT = "/mnt/tm_vision"
 
 
 def _preload_models():
@@ -39,15 +47,24 @@ def _preload_models():
         print(f"[tmflow_server] YOLO preload skipped: {e}")
 
 
-def get_frame():
-    """Fetch latest frame from image server. Returns None if not ready yet."""
+def get_frame(tm_path: str = ""):
+    """Read image from TM controller's shared Vision folder using the path
+    sent by AI_Path_Send. Falls back to /api/snapshot if mount unavailable."""
+    if tm_path:
+        local_path = tm_path.replace("\\", "/")
+        full_path = f"{TM_VISION_MOUNT}/{local_path}"
+        frame = cv2.imread(full_path)
+        if frame is not None:
+            print(f"[tmflow_server] loaded image from share: {full_path}")
+            return frame
+        print(f"[tmflow_server] share read failed ({full_path}), trying /api/snapshot")
+
     try:
-        resp = requests.get(SNAPSHOT_URL, timeout=10)
+        resp = requests.get("http://localhost:6189/api/snapshot", timeout=10)
         if resp.status_code != 200:
             return None
         arr = np.frombuffer(resp.content, np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        return frame
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
     except Exception:
         return None
 
@@ -75,8 +92,11 @@ def handle_client(conn, addr):
         print(f"[tmflow_server] unrecognized command, ignoring")
         return
 
+    # Extract the image path from "tmc_pickup,<path>" — everything after the comma
+    tm_path = data.split(",", 1)[1] if "," in data else ""
+
     try:
-        frame = get_frame()
+        frame = get_frame(tm_path)
         if frame is None:
             print("[tmflow_server] no frame available (Vision1 not posted yet)")
             reply = "0,0"
