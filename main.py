@@ -23,18 +23,24 @@ from arm_comms.tm5_connect import TM5
 # Scan pose = camera home for vision — pick positions are suction tip coords
 # ---------------------------------------------------------------------------
 
-# Basket corners — suction tip at each corner (calibrated 2026-05-12)
-#   top-left:    (-295.45, 430.04)
-#   top-right:   ( -80.84, 454.93)
-#   bottom-left: (-221.21, 186.89)
-#   bottom-right: (-91.44, 231.16)
-BASKET_X_MIN = -295.45  # mm — left edge   (TODO: re-calibrate corners)
-BASKET_X_MAX =  -80.84  # mm — right edge  (TODO: re-calibrate corners)
-BASKET_Y_MIN =  430.00  # mm — near (bottom) (TODO: re-calibrate corners)
-BASKET_Y_MAX =  670.00  # mm — far (top)     (TODO: re-calibrate corners)
+# Basket physical size, measured directly (2026-06-11): X=26cm, Y=32cm
+# Spans recomputed around the calibrated centre below.
+BASKET_WIDTH_MM  = 260.0  # mm — X span (image width direction)
+BASKET_HEIGHT_MM = 320.0  # mm — Y span (image height direction)
 
 BASKET_X     = -167.64  # mm — basket centre (calibrated 2026-05-12)
 BASKET_Y     =  549.72  # mm — basket centre (calibrated 2026-05-12)
+
+BASKET_X_MIN = BASKET_X - BASKET_WIDTH_MM / 2   # mm — left edge
+BASKET_X_MAX = BASKET_X + BASKET_WIDTH_MM / 2   # mm — right edge
+BASKET_Y_MIN = BASKET_Y - BASKET_HEIGHT_MM / 2  # mm — near (bottom)
+BASKET_Y_MAX = BASKET_Y + BASKET_HEIGHT_MM / 2  # mm — far (top)
+
+# Image resolution captured by the robot camera (whole basket fills the frame)
+IMAGE_WIDTH_PX  = 2592
+IMAGE_HEIGHT_PX = 1944
+MM_PER_PX_X = BASKET_WIDTH_MM / IMAGE_WIDTH_PX    # ~0.100 mm/px
+MM_PER_PX_Y = BASKET_HEIGHT_MM / IMAGE_HEIGHT_PX  # ~0.165 mm/px
 PICK_Z_DOWN  =  187.37  # mm — suction Z touching medicine at basket centre (calibrated 2026-05-12)
 PICK_Z_UP    =  250.0   # mm — safe travel height above basket
 
