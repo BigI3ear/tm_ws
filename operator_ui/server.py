@@ -30,20 +30,23 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from main import image_to_robot, PICK_Z_DOWN, PICK_Z_UP
+from main import image_to_robot, image_to_offset, image_to_binb_offset, image_to_binc_offset, PICK_Z_DOWN, PICK_Z_UP
 from vision.claude_vision import detect_all_medicines, scan_qr, classify_medicine, detect_with_yolo
 
 # ---------------------------------------------------------------------------
 # Shared state
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
+_server_start_time = time.time()
 _state = {
     "robot_connected": False,
     "vision_server_ok": False,
     "tmflow_connected": False,
-    "joint_angles": [0.0] * 6,   # degrees
-    "scan_results": [],
-    "selected": None,             # medicine chosen by operator
+    "joint_angles": [0.0] * 6,
+    "scan_results": [],       # UI-facing — only updated by tmc_pickup scans
+    "internal_results": [],   # internal — used by verify/repick/return, not shown in UI
+    "scan_mode": "pickup",    # "pickup" updates UI, others use internal_results
+    "selected": None,
     "last_pick": None,
 }
 _log_queue: queue.Queue = queue.Queue()
@@ -60,17 +63,44 @@ def add_log(level: str, msg: str):
 # ---------------------------------------------------------------------------
 # Vision / detection helpers
 # ---------------------------------------------------------------------------
-TM_VISION_MOUNT = "/mnt/tm_vision"
+TM_VISION_MOUNT = "/mnt/c/tm_vision"
 SNAPSHOT_URL = "http://localhost:6189/api/snapshot"
+
+
+def _find_vision_prefix() -> str:
+    """Auto-detect the TMflow upload prefix (TM_Export/<serial>/TMROBOT_VisionImages/ActionerResult)."""
+    import glob
+    matches = glob.glob(f"{TM_VISION_MOUNT}/TM_Export/*/TMROBOT_VisionImages/ActionerResult")
+    return matches[0] if matches else TM_VISION_MOUNT
 
 
 def _get_frame(tm_path: str = "") -> np.ndarray | None:
     if tm_path:
+        import glob, os
         local = tm_path.replace("\\", "/")
-        full = f"{TM_VISION_MOUNT}/{local}"
-        frame = cv2.imread(full)
-        if frame is not None:
-            return frame
+        filename = os.path.basename(local)
+        prefix = _find_vision_prefix()
+        # Retry for up to 10s — WSL2 drvfs cache can delay visibility of new files
+        for attempt in range(20):
+            # Try exact path first
+            for base in [prefix, TM_VISION_MOUNT]:
+                full = f"{base}/{local}"
+                frame = cv2.imread(full)
+                if frame is not None:
+                    add_log("INFO", f"Loaded image: {full}")
+                    return frame
+            # Fall back to most recently modified PNG anywhere in the share
+            candidates = sorted(
+                glob.glob(f"{TM_VISION_MOUNT}/**/*.png", recursive=True),
+                key=os.path.getmtime, reverse=True
+            )
+            if candidates:
+                frame = cv2.imread(candidates[0])
+                if frame is not None:
+                    add_log("INFO", f"Loaded latest image: {candidates[0]}")
+                    return frame
+            if attempt < 19:
+                time.sleep(0.5)
     try:
         resp = requests.get(SNAPSHOT_URL, timeout=8)
         if resp.status_code == 200:
@@ -87,7 +117,7 @@ def _run_detection(frame: np.ndarray) -> list[dict]:
         results = []
         for hit in qr_hits:
             info = classify_medicine(hit["data"])
-            rx, ry = image_to_robot(hit["center_x"], hit["center_y"])
+            ox, oy = image_to_offset(hit["center_x"], hit["center_y"])
             results.append({
                 "medicine": info.get("medicine", hit["data"]),
                 "description": info.get("description", ""),
@@ -96,16 +126,16 @@ def _run_detection(frame: np.ndarray) -> list[dict]:
                 "source": "qr",
                 "pick_x": hit["center_x"],
                 "pick_y": hit["center_y"],
-                "robot_x": rx,
-                "robot_y": ry,
+                "robot_x": ox,
+                "robot_y": oy,
             })
         return results
 
     raw = detect_all_medicines(frame)
     results = []
     for item in raw:
-        rx, ry = image_to_robot(item["pick_x"], item["pick_y"])
-        results.append({**item, "robot_x": rx, "robot_y": ry})
+        ox, oy = image_to_offset(item["pick_x"], item["pick_y"])
+        results.append({**item, "robot_x": ox, "robot_y": oy})
     return results
 
 
@@ -115,6 +145,36 @@ def _preload():
         add_log("INFO", "YOLO model loaded")
     except Exception as e:
         add_log("WARN", f"YOLO preload skipped: {e}")
+
+
+def _image_watcher():
+    """Watch for new images (after server start) and run detection, updating the UI."""
+    import glob, os
+    last_seen = None
+    while True:
+        try:
+            candidates = sorted(
+                [f for f in glob.glob(f"{TM_VISION_MOUNT}/**/*.png", recursive=True) if "source" in f],
+                key=os.path.getmtime, reverse=True
+            )
+            if candidates and candidates[0] != last_seen:
+                latest = candidates[0]
+                frame = cv2.imread(latest)
+                if frame is not None:
+                    last_seen = latest
+                    add_log("INFO", f"New image: {os.path.basename(latest)} — scanning...")
+                    results = _run_detection(frame)
+                    with _lock:
+                        scan_mode = _state.get("scan_mode", "pickup")
+                        if scan_mode == "pickup":
+                            _state["scan_results"] = results
+                            _state["selected"] = None
+                        else:
+                            _state["internal_results"] = results
+                    add_log("INFO", f"Scan done ({scan_mode}): {len(results)} medicine(s) detected")
+        except Exception as e:
+            add_log("WARN", f"Image watcher error: {e}")
+        time.sleep(1)
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +221,9 @@ def _vision_checker():
 # ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder="static")
 CORS(app)
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 
 @app.route("/")
@@ -177,6 +240,20 @@ def snapshot():
     except Exception:
         pass
     return jsonify({"error": "no frame"}), 503
+
+
+@app.route("/api/latest-image")
+def latest_image():
+    """Serve the most recent Vision image from the VISION share."""
+    import glob, os
+    candidates = sorted(
+        [f for f in glob.glob(f"{TM_VISION_MOUNT}/**/*.png", recursive=True) if "source" in f],
+        key=os.path.getmtime, reverse=True
+    )
+    if not candidates:
+        return jsonify({"error": "no image yet"}), 503
+    with open(candidates[0], "rb") as f:
+        return Response(f.read(), mimetype="image/png")
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -238,65 +315,225 @@ def log_stream():
 
 
 # ---------------------------------------------------------------------------
+# Verify handler — called after medicine dropped in bin B
+# Scans bin B image, checks if correct medicine was placed
+# Reply: "0,0" = correct (loop back) | "X,Y" = wrong (pick from B, put in C)
+# ---------------------------------------------------------------------------
+def _handle_verify(conn, data):
+    add_log("INFO", "Verifying medicine in bin B...")
+
+    with _lock:
+        _state["scan_mode"] = "verify"
+        _state["internal_results"] = []
+        last_pick = _state.get("last_pick")
+
+    for _ in range(60):
+        with _lock:
+            results = _state["internal_results"]
+        if results:
+            break
+        time.sleep(0.5)
+
+    with _lock:
+        results = _state["internal_results"]
+        _state["scan_mode"] = "pickup"
+
+    if not results:
+        add_log("WARN", "Verify: nothing detected — assuming correct")
+        conn.sendall(b"0,0")
+        return
+
+    with _lock:
+        last_pick = _state.get("last_pick")
+
+    detected = results[0]["medicine"]
+    expected = last_pick["medicine"] if last_pick else None
+
+    def _same_med(a, b):
+        from difflib import SequenceMatcher
+        a, b = a.lower(), b.lower()
+        # Direct substring check
+        if a in b or b in a:
+            return True
+        # Any word overlap (ignoring dosage words)
+        skip = {"mg", "ml", "tab", "cap", "syrup", "solution"}
+        wa = {w.strip("()[]") for w in a.split() if len(w.strip("()[]")) > 3 and w.strip("()[]") not in skip}
+        wb = {w.strip("()[]") for w in b.split() if len(w.strip("()[]")) > 3 and w.strip("()[]") not in skip}
+        if wa & wb:
+            return True
+        # Fuzzy similarity fallback
+        return SequenceMatcher(None, a, b).ratio() > 0.6
+
+    if expected and not _same_med(detected, expected):
+        # Wrong medicine — send its position so robot can pick it from B
+        ox, oy = image_to_binb_offset(results[0]["pick_x"], results[0]["pick_y"])
+        reply = f"{ox},{oy}"
+        add_log("WARN", f"Verify FAILED: expected {expected}, got {detected} → pick from B at {reply}")
+    else:
+        reply = "0,0"
+        add_log("INFO", f"Verify OK: {detected} ✓")
+
+    conn.sendall(reply.encode("utf-8"))
+    add_log("SEND", f"→ TMflow verify: {reply}")
+
+
+# ---------------------------------------------------------------------------
+# Repick handler — auto re-pick the same medicine after wrong pick dropped in C
+# Scans basket A, finds the medicine from last_pick, returns its offset
+# ---------------------------------------------------------------------------
+def _handle_return(conn, data):
+    """Scan bin C, find wrong medicine, return its offset so robot can pick it back to A."""
+    add_log("INFO", "Return: scanning bin C for wrong medicine...")
+
+    with _lock:
+        _state["scan_mode"] = "return"
+        _state["internal_results"] = []
+
+    for _ in range(60):
+        with _lock:
+            results = _state["internal_results"]
+        if results:
+            break
+        time.sleep(0.5)
+
+    with _lock:
+        results = _state["internal_results"]
+        _state["scan_mode"] = "pickup"
+
+    if not results:
+        add_log("WARN", "Return: nothing detected in bin C — sending 0,0")
+        conn.sendall(b"0,0")
+        return
+
+    item = results[0]
+    ox, oy = image_to_binc_offset(item["pick_x"], item["pick_y"])
+    reply = f"{ox},{oy}"
+    add_log("INFO", f"Return: {item['medicine']} at {reply} — picking back to A")
+    conn.sendall(reply.encode("utf-8"))
+    add_log("SEND", f"→ TMflow return: {reply}")
+
+
+def _handle_repick(conn, data):
+    add_log("INFO", "Repick: waiting for fresh scan of basket A...")
+
+    with _lock:
+        _state["scan_mode"] = "repick"
+        _state["internal_results"] = []
+        last_pick = _state.get("last_pick")
+
+    for _ in range(60):
+        with _lock:
+            results = _state["internal_results"]
+        if results:
+            break
+        time.sleep(0.5)
+
+    with _lock:
+        results = _state["internal_results"]
+        _state["scan_mode"] = "pickup"
+
+    if not results:
+        add_log("WARN", "Repick: nothing detected in basket A — sending 0,0")
+        conn.sendall(b"0,0")
+        return
+
+    # Find the medicine we originally wanted, fall back to first detected
+    expected = last_pick["medicine"] if last_pick else None
+    match = next((r for r in results if expected and r["medicine"].lower() == expected.lower()), results[0])
+
+    ox, oy = match["robot_x"], match["robot_y"]
+    reply = f"{ox},{oy}"
+    add_log("PICK", f"Repick: found {match['medicine']} → {reply}")
+    conn.sendall(reply.encode("utf-8"))
+    add_log("SEND", f"→ TMflow repick: {reply}")
+
+
+# ---------------------------------------------------------------------------
 # TMflow TCP bridge (port 6190) — runs in background thread
 # ---------------------------------------------------------------------------
 def _handle_tmflow(conn, addr):
     try:
         with _lock:
             _state["tmflow_connected"] = True
-        data = conn.recv(4096).decode("utf-8", errors="ignore").strip()
-        add_log("RECV", f"TMflow: {data[:100]}")
+        add_log("INFO", f"TMflow connected from {addr}")
+        while True:
+            data = conn.recv(4096).decode("utf-8", errors="ignore").strip()
+            if not data:
+                add_log("INFO", f"TMflow disconnected from {addr}")
+                break  # connection closed by TMflow
 
-        if not data.startswith("tmc_pickup"):
-            return
+            add_log("RECV", f"TMflow: {data[:100]}")
 
-        tm_path = data.split(",", 1)[1] if "," in data else ""
+            if data.startswith("tmc_verify"):
+                _handle_verify(conn, data)
+                continue
 
-        with _lock:
-            selected = _state["selected"]
+            if data.startswith("tmc_repick"):
+                _handle_repick(conn, data)
+                continue
 
-        if selected:
-            x, y = selected["robot_x"], selected["robot_y"]
-            add_log("PICK", f"Sending operator pick: {selected['medicine']} → ({x}, {y}) mm")
+            if data.startswith("tmc_return"):
+                _handle_return(conn, data)
+                continue
+
+            if not data.startswith("tmc_pickup"):
+                continue
+
+            # Clear old results and wait for image watcher to scan the new image
+            with _lock:
+                _state["scan_results"] = []
+            add_log("INFO", "Waiting for fresh scan...")
+            for _ in range(60):  # wait up to 30s
+                with _lock:
+                    results = _state["scan_results"]
+                if results:
+                    break
+                time.sleep(0.5)
+
+            with _lock:
+                results = _state["scan_results"]
+
+            if not results:
+                add_log("WARN", "No medicines detected — skipping pick")
+                continue
+
+            # Print menu to terminal (UI selection also works)
+            print("\n" + "="*50)
+            print("MEDICINES DETECTED — select in UI or type number:")
+            for i, item in enumerate(results):
+                print(f"  [{i+1}] {item['medicine']}  →  ({item['robot_x']}, {item['robot_y']}) mm")
+            print("  [0] Skip")
+            print("="*50)
+
+            # Clear any previous UI selection
             with _lock:
                 _state["selected"] = None
-                _state["last_pick"] = {
-                    "medicine": selected["medicine"],
-                    "x": x, "y": y,
-                    "time": time.strftime("%H:%M:%S"),
-                }
-        else:
-            frame = _get_frame(tm_path)
-            if frame is None:
-                add_log("WARN", "No frame — sending 0,0")
-                conn.sendall(b"0,0")
-                return
-            results = _run_detection(frame)
-            with _lock:
-                _state["scan_results"] = results
-            if not results:
-                add_log("WARN", "No medicine detected — sending 0,0")
-                conn.sendall(b"0,0")
-                return
-            item = results[0]
-            x, y = item["robot_x"], item["robot_y"]
-            add_log("INFO", f"Auto-pick: {item['medicine']} → ({x}, {y}) mm")
-            with _lock:
-                _state["last_pick"] = {
-                    "medicine": item["medicine"],
-                    "x": x, "y": y,
-                    "time": time.strftime("%H:%M:%S"),
-                }
 
-        reply = f"{x},{y}"
-        conn.sendall(reply.encode("utf-8"))
-        add_log("SEND", f"→ TMflow: {reply}")
+            choice = None
+            while choice is None:
+                with _lock:
+                    ui_pick = _state["selected"]
+                if ui_pick:
+                    choice = ui_pick
+                    print(f"  UI selected: {choice['medicine']}")
+                    break
+                time.sleep(0.3)
+
+            if choice is None:
+                continue
+
+            x, y = choice["robot_x"], choice["robot_y"]
+            reply = f"{x},{y}"
+            with _lock:
+                _state["last_pick"] = {
+                    "medicine": choice["medicine"],
+                    "x": x, "y": y,
+                    "time": time.strftime("%H:%M:%S"),
+                }
+            conn.sendall(reply.encode("utf-8"))
+            add_log("PICK", f"Sent: {choice['medicine']} → {reply}")
     except Exception as e:
-        add_log("ERROR", str(e))
-        try:
-            conn.sendall(b"0,0")
-        except Exception:
-            pass
+        add_log("ERROR", f"TMflow connection error: {e}")
     finally:
         conn.close()
         with _lock:
@@ -325,6 +562,7 @@ if __name__ == "__main__":
         (_joint_poller, "joint-poller"),
         (_vision_checker, "vision-checker"),
         (_tmflow_tcp_server, "tmflow-bridge"),
+        (_image_watcher, "image-watcher"),
     ]:
         t = threading.Thread(target=fn, name=name, daemon=True)
         t.start()

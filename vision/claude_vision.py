@@ -42,7 +42,7 @@ def detect_with_yolo(frame: np.ndarray) -> list[dict] | None:
         from ultralytics import YOLO
         model = YOLO(str(YOLO_WEIGHTS))
         H, W = frame.shape[:2]
-        results = model(frame, conf=0.45, iou=0.6, imgsz=1280, verbose=False)[0]
+        results = model(frame, conf=0.55, iou=0.5, imgsz=1280, verbose=False)[0]
 
         # Keep only highest-confidence detection per class
         best = {}
@@ -60,6 +60,10 @@ def detect_with_yolo(frame: np.ndarray) -> list[dict] | None:
 
         detections = []
         for cls, item in sorted(best.items()):
+            # Reject detections near image edges (black border outside basket)
+            px, py = item["pick_x"], item["pick_y"]
+            if px < 0.02 or px > 0.90 or py < 0.02 or py > 0.95:
+                continue
             label = item["label"]
             detections.append({
                 "source":      "yolo",
@@ -69,9 +73,9 @@ def detect_with_yolo(frame: np.ndarray) -> list[dict] | None:
                 "description": "",
                 "bin":         _BIN_MAP.get(label, "A"),
                 "action":      "pick_and_place",
-                "pick_x":      item["pick_x"],
-                "pick_y":      item["pick_y"],
-                "confidence":  "high" if item["conf"] >= 0.6 else "medium" if item["conf"] >= 0.4 else "low",
+                "pick_x":      px,
+                "pick_y":      py,
+                "confidence":  "high" if item["conf"] >= 0.70 else "medium" if item["conf"] >= 0.55 else "low",
             })
         return detections
     except Exception as e:
@@ -231,20 +235,24 @@ def detect_all_medicines(frame) -> list[dict]:
       3. CLIP — second opinion for Claude low-confidence Thai items
     Returns list of {medicine, label, description, bin, confidence, pick_x, pick_y, source}
     """
-    # Stage 1: YOLO for known Thai medicines
-    yolo_results = detect_with_yolo(frame) or []
-    if yolo_results:
-        print(f"  YOLO detected {len(yolo_results)} Thai medicines")
+    # Stage 1: YOLO — only use high-confidence detections to supplement Claude
+    yolo_all = detect_with_yolo(frame) or []
+    yolo_high = [r for r in yolo_all if r["confidence"] == "high"]
+    yolo_uncertain = [r for r in yolo_all if r["confidence"] != "high"]
+    if yolo_high:
+        print(f"  YOLO high-confidence: {len(yolo_high)} medicines")
+    # Don't restrict Claude — let Claude detect everything independently
+    yolo_results = []  # Claude is primary detector; YOLO only improves positions below
 
-    # Stage 2: Claude for English/unknown meds not covered by YOLO
-    print("  Calling Claude for English/unknown medicines...")
+    # Stage 2: Claude for English/unknown meds + confirm uncertain YOLO detections
+    print("  Calling Claude...", flush=True)
     img_bytes = _prepare_image(frame)
     img_b64 = base64.b64encode(img_bytes).decode()
 
     client = anthropic.Anthropic(timeout=30.0)
     response = client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=1024,
+        max_tokens=2048,
         messages=[{
             "role": "user",
             "content": [
@@ -263,16 +271,11 @@ def detect_all_medicines(frame) -> list[dict]:
                         "you MUST use exactly this medicine name and label:\n"
                         "  - Betadine antiseptic (yellow/brown bottle) → medicine='Betadine', label='Betadine'\n"
                         "  - Gentian Violet (small dark purple bottle) → medicine='Gentian Violet', label='Gentian_Violet'\n"
-                        "  - Leopard cough syrup (orange hexagonal bottle, Thai label) → medicine='Leopard Cough Syrup', label='Leopard_Cough_Syrup'\n"
+                        "  - Leopard cough syrup (dark/black hexagonal bottle with Chinese text and red+green label, cap on top — if you see a dark bottle with Chinese characters, this is most likely Leopard Cough Syrup) → medicine='Leopard Cough Syrup', label='Leopard_Cough_Syrup'\n"
                         "  - Siribuncha isopropyl/rubbing alcohol (blue spray bottle) → medicine='Siribuncha Alcohol', label='Siribuncha_Alcohol'\n"
                         "  - Ya That Nam Khao White Rabbit / ยาธาตุน้ำขาว (white tube/bottle, rabbit logo) → medicine='Ya That Nam Khao White Rabbit', label='Ya_That_Nam_Khao_White_Rabbit'\n\n"
-                        + (lambda yr: (
-                            "NOTE: These Thai medicines have ALREADY been identified by a local model — "
-                            "DO NOT report them again: " + ", ".join(r["medicine"] for r in yr) + ". "
-                            "Skip any object at or near their positions: " +
-                            ", ".join("({},{})".format(r["pick_x"], r["pick_y"]) for r in yr) +
-                            ".\n\n"
-                        ) if yr else "")(yolo_results) +
+                        +
+                        "IMPORTANT: There is at most ONE of each medicine in the basket. Do NOT report the same medicine name twice — if you think you see the same medicine in two places, pick the most clearly visible one.\n\n"
                         "Scan the image systematically: top-left → top-right → middle → bottom-left → bottom-right. "
                         "For each distinct physical object (bottle, tube, blister pack, sachet, bag) NOT already listed above: "
                         "report it even if you can only see part of the label or packaging. "
@@ -302,6 +305,7 @@ def detect_all_medicines(frame) -> list[dict]:
     items = json.loads(raw)
     if not isinstance(items, list):
         items = [items]
+    print(f"  Claude detected {len(items)} items: {[i.get('medicine') for i in items]}", flush=True)
 
     # CLIP second-opinion for low-confidence items
     h, w = frame.shape[:2]
@@ -318,7 +322,8 @@ def detect_all_medicines(frame) -> list[dict]:
         cy = float(item.get("cy", 0.5))
         confidence = item.get("confidence", "low")
 
-        if clip_available and confidence in ("low", "medium"):
+        medicine_name = item.get("medicine", "")
+        if clip_available and confidence in ("low", "medium") and medicine_name.lower() not in ("unknown", ""):
             # Crop a region around the detected medicine centre for CLIP
             crop_w, crop_h = int(w * 0.35), int(h * 0.35)
             x1 = max(0, int(cx * w) - crop_w // 2)
@@ -327,7 +332,7 @@ def detect_all_medicines(frame) -> list[dict]:
             y2 = min(h, y1 + crop_h)
             crop = frame[y1:y2, x1:x2]
             clip_result = clip_match(crop)
-            if clip_result and clip_result["score"] >= 0.75:
+            if clip_result and clip_result["score"] >= 0.85:
                 item["medicine"] = clip_result["medicine"]
                 item["label"] = clip_result["label"]
                 item["confidence"] = clip_result["confidence"]
@@ -339,11 +344,28 @@ def detect_all_medicines(frame) -> list[dict]:
             item["source"] = "vision" if not item.get("source") else item["source"]
 
         lbl = item.get("label", "Unknown")
-        # Skip if YOLO already identified this Thai medicine
+        # Skip if YOLO already identified this with high confidence
         if any(r["label"] == lbl for r in yolo_results):
             continue
 
-        # If Claude identified a known Thai medicine, enforce correct bin
+        # Check if Claude is confirming an uncertain YOLO detection
+        # If YOLO also detected this medicine nearby, use YOLO's more accurate position
+        yolo_match = next(
+            (r for r in yolo_all if
+             (r["label"] == lbl or
+              r["medicine"].lower().split()[0] == item.get("medicine","").lower().split()[0]) and
+             abs(r["pick_x"] - cx) < 0.2 and abs(r["pick_y"] - cy) < 0.2),
+            None
+        )
+        if yolo_match:
+            cx, cy = yolo_match["pick_x"], yolo_match["pick_y"]
+            print(f"  Using YOLO position for {item.get('medicine')}: ({cx},{cy})")
+
+        # Only skip truly unknown items with low confidence
+        if item.get("confidence") == "low" and item.get("medicine", "").lower() in ("unknown", ""):
+            print(f"  Skipping unknown low-confidence item")
+            continue
+
         bin_id = _BIN_MAP.get(lbl, item.get("bin", "C"))
         results.append({
             "source":      item.get("source", "vision"),
@@ -355,11 +377,20 @@ def detect_all_medicines(frame) -> list[dict]:
             "action":      "pick_and_place",
             "pick_x":      round(cx, 3),
             "pick_y":      round(cy, 3),
-            "confidence":  item.get("confidence", "low"),
+            "confidence":  item.get("confidence", "medium"),
         })
 
-    # Merge: YOLO Thai meds + Claude English/unknown meds
-    return yolo_results + results
+    # Merge, deduplicate by medicine name (keep highest confidence), remove unknowns
+    merged = yolo_results + results
+    seen = {}
+    CONF_ORDER = {"high": 3, "medium": 2, "low": 1}
+    for item in merged:
+        name = item["medicine"].lower()
+        if "unknown" in name or name == "":
+            continue
+        if name not in seen or CONF_ORDER.get(item["confidence"], 0) > CONF_ORDER.get(seen[name]["confidence"], 0):
+            seen[name] = item
+    return list(seen.values())
 
 
 def classify_from_image(frame) -> dict:

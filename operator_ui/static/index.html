@@ -636,6 +636,7 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let scanResults = [];
 let selectedIdx = null;
+let _prevSelectedMedicine = null;
 let imgLoaded = false;
 
 // ── Clock ──────────────────────────────────────────────────────────────────
@@ -703,10 +704,30 @@ async function pollStatus() {
         `${s.last_pick.medicine}  ${s.last_pick.time}`;
     }
 
-    // If TMflow just completed a pick, show it
-    if (s.selected === null && selectedIdx !== null) {
-      // pick was consumed
+    // Sync scan results from server
+    const newResults = s.scan_results || [];
+    if (newResults.length !== scanResults.length ||
+        (newResults.length > 0 && newResults[0].medicine !== (scanResults[0] || {}).medicine)) {
+      scanResults = newResults;
+      selectedIdx = null;
+      renderMedList();
+      refreshCamera();
+      drawOverlays();
+      const now = new Date().toLocaleTimeString();
+      document.getElementById('scan-last').textContent = `Auto-scan: ${now}`;
+      document.getElementById('scan-count').textContent =
+        scanResults.length ? `${scanResults.length} item${scanResults.length>1?'s':''} detected` : 'No items detected';
+      document.getElementById('med-header-count').textContent =
+        `${scanResults.length} item${scanResults.length!==1?'s':''}`;
     }
+
+    // Pick was consumed by TMflow — reset selection only if server had a pick queued before
+    if (s.selected === null && _prevSelectedMedicine) {
+      _prevSelectedMedicine = null;
+      selectedIdx = null;
+      renderMedList();
+    }
+    if (s.selected) _prevSelectedMedicine = s.selected.medicine;
   } catch(e) {}
 }
 
@@ -716,15 +737,25 @@ pollStatus();
 // ── Camera refresh ─────────────────────────────────────────────────────────
 function refreshCamera() {
   const img = document.getElementById('cam-img');
-  img.src = '/api/snapshot?' + Date.now();
+  // Use latest Vision share image; fall back to live snapshot
+  img.src = '/api/latest-image?' + Date.now();
   img.onload = () => {
     document.getElementById('cam-placeholder').style.display = 'none';
     imgLoaded = true;
     drawOverlays();
   };
   img.onerror = () => {
-    document.getElementById('cam-placeholder').style.display = 'flex';
-    imgLoaded = false;
+    // fallback to live snapshot
+    img.src = '/api/snapshot?' + Date.now();
+    img.onload = () => {
+      document.getElementById('cam-placeholder').style.display = 'none';
+      imgLoaded = true;
+      drawOverlays();
+    };
+    img.onerror = () => {
+      document.getElementById('cam-placeholder').style.display = 'flex';
+      imgLoaded = false;
+    };
   };
 }
 
@@ -742,16 +773,21 @@ function drawOverlays() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const W = canvas.width, H = canvas.height;
-  const BOX = 60;
+  const BOX = 80;
 
   scanResults.forEach((item, i) => {
     const cx = item.pick_x * W;
     const cy = item.pick_y * H;
     const isSelected = i === selectedIdx;
 
-    ctx.strokeStyle = isSelected ? '#e89010' : 'rgba(0,194,212,0.7)';
-    ctx.lineWidth = isSelected ? 2 : 1;
+    ctx.strokeStyle = isSelected ? '#e89010' : '#00c2d4';
+    ctx.lineWidth = isSelected ? 3 : 2;
     ctx.strokeRect(cx - BOX/2, cy - BOX/2, BOX, BOX);
+
+    // label
+    ctx.font = 'bold 11px JetBrains Mono, monospace';
+    ctx.fillStyle = isSelected ? '#e89010' : '#00c2d4';
+    ctx.fillText(`${i+1}`, cx - BOX/2 + 3, cy - BOX/2 - 3);
 
     // corner ticks
     const t = 8;

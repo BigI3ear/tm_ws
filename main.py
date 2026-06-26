@@ -28,13 +28,15 @@ from arm_comms.tm5_connect import TM5
 BASKET_WIDTH_MM  = 260.0  # mm — X span (image width direction)
 BASKET_HEIGHT_MM = 320.0  # mm — Y span (image height direction)
 
-BASKET_X     = -167.64  # mm — basket centre (calibrated 2026-05-12)
-BASKET_Y     =  549.72  # mm — basket centre (calibrated 2026-05-12)
-
-BASKET_X_MIN = BASKET_X - BASKET_WIDTH_MM / 2   # mm — left edge
-BASKET_X_MAX = BASKET_X + BASKET_WIDTH_MM / 2   # mm — right edge
-BASKET_Y_MIN = BASKET_Y - BASKET_HEIGHT_MM / 2  # mm — near (bottom)
-BASKET_Y_MAX = BASKET_Y + BASKET_HEIGHT_MM / 2  # mm — far (top)
+# Basket corners measured by jogging robot to top-left of image (2026-06-18)
+# image (0,0) top-left  → robot (-325.36, 900.85)
+# image (1,1) bot-right → robot (-65.36,  580.85)  (computed from basket size)
+BASKET_X_MIN = -325.36  # mm — left edge  (image x=0)
+BASKET_X_MAX =  -65.36  # mm — right edge (image x=1)
+BASKET_Y_MAX =  900.85  # mm — far edge   (image y=0)
+BASKET_Y_MIN =  580.85  # mm — near edge  (image y=1)
+BASKET_X     = (BASKET_X_MIN + BASKET_X_MAX) / 2  # -195.36
+BASKET_Y     = (BASKET_Y_MIN + BASKET_Y_MAX) / 2  # 740.85
 
 # Image resolution captured by the robot camera (whole basket fills the frame)
 IMAGE_WIDTH_PX  = 2592
@@ -42,10 +44,10 @@ IMAGE_HEIGHT_PX = 1944
 MM_PER_PX_X = BASKET_WIDTH_MM / IMAGE_WIDTH_PX    # ~0.100 mm/px
 MM_PER_PX_Y = BASKET_HEIGHT_MM / IMAGE_HEIGHT_PX  # ~0.165 mm/px
 PICK_Z_DOWN  =  187.37  # mm — suction Z touching medicine at basket centre (calibrated 2026-05-12)
-PICK_Z_UP    =  250.0   # mm — safe travel height above basket
+PICK_Z_UP    =  254.63  # mm — safe travel height (scan position Z, 2026-06-18)
 
-# Grasp orientation — Rx=180 avoids IK singularity at 179.49
-TCP_RX, TCP_RY, TCP_RZ = 180.0, 0.0, -178.0
+# Grasp orientation (from scan position read 2026-06-18)
+TCP_RX, TCP_RY, TCP_RZ = -179.94, 0.37, -179.26
 
 # Bin drop-off position (calibrated 2026-06-10 — physically jogged & read from /tool_pose)
 BIN_X      =  174.32  # mm
@@ -57,12 +59,47 @@ BINS = {
     "C": (BIN_X, BIN_Y, PICK_Z_UP),
 }
 
+# Bin B verify scan — top-left corner (image 0,0) measured 2026-06-22
+BINB_X_MIN =   -8.843  # mm
+BINB_Y_MAX =  876.890  # mm
+BINB_WIDTH_MM  = BASKET_WIDTH_MM   # 260mm — same as basket A
+BINB_HEIGHT_MM = BASKET_HEIGHT_MM  # 320mm — same as basket A
+
+
+def image_to_binb_offset(pick_x: float, pick_y: float) -> tuple[float, float]:
+    """Map normalised image coords to offset from bin B top-left corner (X inverted)."""
+    ox = round(-pick_x * BINB_WIDTH_MM, 1)
+    oy = round(-pick_y * BINB_HEIGHT_MM, 1)
+    return ox, oy
+
+
+# Bin C scan — top-left corner measured 2026-06-23
+BINC_X_MIN =  -21.37
+BINC_Y_MAX = -898.75
+BINC_WIDTH_MM  = BASKET_WIDTH_MM
+BINC_HEIGHT_MM = BASKET_HEIGHT_MM
+
+
+def image_to_binc_offset(pick_x: float, pick_y: float) -> tuple[float, float]:
+    """Map normalised image coords to offset from bin C top-left corner (X inverted)."""
+    ox = round(-pick_x * BINC_WIDTH_MM, 1)
+    oy = round(-pick_y * BINC_HEIGHT_MM, 1)
+    return ox, oy
+
 
 def image_to_robot(pick_x: float, pick_y: float) -> tuple[float, float]:
-    """Map normalised image coords (0-1) to robot Cartesian mm using calibrated basket corners."""
+    """Map normalised image coords (0-1) to robot Cartesian mm (absolute base frame)."""
     rx = BASKET_X_MIN + pick_x * (BASKET_X_MAX - BASKET_X_MIN)
     ry = BASKET_Y_MAX - pick_y * (BASKET_Y_MAX - BASKET_Y_MIN)
     return round(rx, 1), round(ry, 1)
+
+
+def image_to_offset(pick_x: float, pick_y: float) -> tuple[float, float]:
+    """Map normalised image coords (0-1) to mm offset from basket top-left corner.
+    Robot goes to top-left (0,0) first, then this offset is added by the Move node."""
+    ox = round(-pick_x * BASKET_WIDTH_MM, 1)
+    oy = round(-pick_y * BASKET_HEIGHT_MM, 1)
+    return ox, oy
 
 
 def place_in_bin(arm: TM5, bin_id: str, dry_run: bool):
